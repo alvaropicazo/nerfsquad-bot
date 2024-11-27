@@ -2,3 +2,4 @@ url:
   helius: https://api.helius.xyz/v0/addresses/{}/transactions
   raydium: https://api-v3.raydium.io/
   solscan: https://api-v2.solscan.io/v2/account/transactions?account=
+  instantnodes: https://solana-api.instantnodes.io/token-
