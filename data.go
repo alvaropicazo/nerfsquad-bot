@@ -2,35 +2,92 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"log"
 	"os"
+	"time"
 
-	bin "github.com/gagliardetto/binary"
+	"github.com/avast/retry-go/v4"
 	"github.com/gagliardetto/solana-go"
-	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 	"gopkg.in/yaml.v3"
 )
 
 // Calculates the quantit of x token that should be transferred according to our balance.
-func (m *ControlConcurrency) format_data(tx_available []TransactionFormatted) ([]TransactionToSend, error) {
+func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExternalWallet solana.PublicKey, personalKeyExternalWallet solana.PublicKey, slippage float64) ([]TransactionToSend, error) {
+	configs := []retry.Option{
+		retry.Attempts(uint(1)),
+		retry.OnRetry(func(n uint, err error) {
+			log.Printf("Retry request %d to and get error: %v", n+1, err)
+		}),
+		retry.Delay(time.Second),
+	}
 	res := []TransactionToSend{}
 	for _, tx := range tx_available {
 		tx_to_send := TransactionToSend{}
 		if tx.Type == "BUY" {
-			percentage_external := tx.SolAmount / float64(m.ExternalBalance)
-			sol_to_spend := m.PersonalWallet.PersonalBalance * uint64(percentage_external)
-			tx_to_send.SolAmount = float64(sol_to_spend)
+			//Get Info for external wallet about the mint
+			err := retry.Do(
+				func() error {
+					err := ns.get_token_account_for_specific_mint(pubKeyExternalWallet, tx.MintName.ToPointer(), false)
+					if err != nil {
+						ns.Log.Error().Msg(err.Error())
+						return err
+					}
+					return nil
+				},
+				configs...,
+			)
+			if err != nil {
+				ns.Log.Error().Msg(err.Error())
+				return nil, err
+			}
+			total := tx.SolAmount + ns.ExternalWallet.PersonalBalance + float64(ns.ExternalWallet.MintQuantityHashMap[solana.WrappedSol])
+			percentage_external := tx.SolAmount / total
+			sol_to_spend := ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol] * percentage_external
+			tx_to_send.MintAmount = tx.MintAmount
+			tx_to_send.Slippage = slippage //*sol_to_spend + sol_to_spend
+			tx_to_send.SolAmount = sol_to_spend
+			// ns.ExternalWallet.TokenAccountHashMap[solana.MustPublicKeyFromBase58("5z3iCe53hUANTiG8Js8RjHNE2Arjik7L2CXLyr2rpump")] = solana.PublicKey{} //comment out
+			tx_to_send.TokenAccountPersonal = ns.PersonalWallet.TokenAccountHashMap[solana.WrappedSol]
+			tx_to_send.TokenAccountExternal = ns.ExternalWallet.TokenAccountHashMap[tx_to_send.MintName]
 
 		} else if tx.Type == "SELL" {
-			percentage_external := tx.MintAmount / tx.MintPre //If its 1, all stake was sold.
-			tokens_to_sell := m.PersonalWallet.MintQuantityHashMap[tx.MintName] * percentage_external
-			tx_to_send.MintAmount = tokens_to_sell
-
+			if ns.PersonalWallet.MintQuantityHashMap[tx.MintName] == 0.0 {
+				continue //we skip as we dont have anything to sell
+			} else {
+				err := retry.Do(
+					func() error {
+						err := ns.get_token_account_for_specific_mint(personalKeyExternalWallet, tx.MintName.ToPointer(), true)
+						if err != nil {
+							ns.Log.Error().Msg(err.Error())
+							return err
+						}
+						return nil
+					},
+					configs...,
+				)
+				if err != nil {
+					ns.Log.Error().Msg(err.Error())
+					return nil, err
+				}
+				percentage_external := tx.MintAmount / tx.MintPre //If its 1, all stake was sold for that token.
+				mint_to_sell := ns.PersonalWallet.MintQuantityHashMap[tx.MintName] * percentage_external
+				sol_to_receive := mint_to_sell * tx.SolAmount / tx.MintAmount
+				tx_to_send.MintAmount = mint_to_sell
+				tx_to_send.SolAmount = sol_to_receive // - sol_to_receive*slippage
+				tx_to_send.Slippage = slippage
+				tx_to_send.TokenAccountPersonal = ns.PersonalWallet.TokenAccountHashMap[tx_to_send.MintName]
+				tx_to_send.TokenAccountExternal = ns.ExternalWallet.TokenAccountHashMap[solana.WrappedSol]
+			}
 		}
 		tx_to_send.Type = tx.Type
+		tx_to_send.ProgramId = tx.ProgramId
 		tx_to_send.MintName = tx.MintName
+		res = append(res, tx_to_send)
 	}
-
+	marsh, _ := json.Marshal(res)
+	ns.Log.Info().Msg("Transactions that will be sent: " + string(marsh))
 	return res, nil
 }
 
@@ -83,9 +140,26 @@ func get_wallet_obj() (map[interface{}]interface{}, error) {
 
 }
 
+// Retrieves the wallet that will be replicated and dex's wallets to filter transactions.
+func get_personal_wallet_obj() (map[interface{}]interface{}, error) {
+	wallets_file := make(map[interface{}]interface{})
+
+	wallets_byte, err := os.ReadFile("./config/cryptokeys.yaml")
+	if err != nil {
+		return nil, err
+	}
+	err = yaml.Unmarshal(wallets_byte, wallets_file)
+	if err != nil {
+		return nil, err
+	}
+
+	return wallets_file, nil
+
+}
+
 // Gets the signature as a starting point, any transaction newer to it should be checked.
-func get_starting_point(wallet_address solana.PublicKey, api_token string, current_date int64, client *rpc.Client) (solana.Signature, error) {
-	out, err := client.GetSignaturesForAddress(
+func (ns *NSReceiver) get_starting_point(wallet_address solana.PublicKey, api_token string, current_date int64) (solana.Signature, error) {
+	out, err := ns.Client.GetSignaturesForAddress(
 		context.TODO(),
 		wallet_address,
 		nil,
@@ -102,14 +176,14 @@ func get_starting_point(wallet_address solana.PublicKey, api_token string, curre
 }
 
 // Retrieves SOL balance and mints of tokens owned by the tracked wallet.
-func (m *ControlConcurrency) get_balance(client *rpc.Client, external_wallet_address solana.PublicKey, personal_wallet_address solana.PublicKey) error {
+func (ns *NSReceiver) get_balance(client *rpc.Client, external_wallet_address solana.PublicKey, personal_wallet_address solana.PublicKey) error {
 	out_sol, err := client.GetBalance(
 		context.TODO(),
 		external_wallet_address,
 		rpc.CommitmentFinalized,
 	)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	out_sol_personal, err := client.GetBalance(
@@ -120,30 +194,59 @@ func (m *ControlConcurrency) get_balance(client *rpc.Client, external_wallet_add
 	if err != nil {
 		return err
 	}
-
-	m.PersonalWallet.PersonalBalance = out_sol_personal.Value
-	m.ExternalBalance = out_sol.Value
-
-	err = m.get_token_accounts(personal_wallet_address, client)
+	//Get SOL from our wallet and from the external wallet being tracked
+	ns.PersonalWallet.PersonalBalance = float64(float64(out_sol_personal.Value) / 1000000000)
+	ns.ExternalWallet.PersonalBalance = float64(float64(out_sol.Value) / 1000000000)
+	configs := []retry.Option{
+		retry.Attempts(uint(3)),
+		retry.OnRetry(func(n uint, err error) {
+			log.Printf("Retry request %d to and get error: %v", n+1, err)
+		}),
+		retry.Delay(time.Second),
+	}
+	//due to requests / sec limitations, we are obligued to retry in case it fails (too many attempts / sec)
+	err = retry.Do(
+		func() error {
+			err := ns.get_token_account_for_specific_mint(external_wallet_address, solana.WrappedSol.ToPointer(), false)
+			if err != nil {
+				ns.Log.Error().Msg(err.Error())
+				return err
+			}
+			return nil
+		},
+		configs...,
+	)
 	if err != nil {
+		ns.Log.Error().Msg(err.Error())
 		return err
 	}
-	//spew.Dump(out_sol.Value) // total lamports on the account; 1 sol = 1000000000 lamports
-
-	// var lamportsOnAccount = new(big.Float).SetUint64(uint64(out_sol.Value))
-	// // Convert lamports to sol:
-	// var solBalance = new(big.Float).Quo(lamportsOnAccount, new(big.Float).SetUint64(solana.LAMPORTS_PER_SOL))
+	err = retry.Do(
+		func() error {
+			err := ns.get_token_account_for_specific_mint(personal_wallet_address, solana.WrappedSol.ToPointer(), true)
+			if err != nil {
+				ns.Log.Error().Msg(err.Error())
+				return err
+			}
+			return nil
+		},
+		configs...,
+	)
+	if err != nil {
+		ns.Log.Error().Msg(err.Error())
+		return err
+	}
 
 	return nil
 }
 
-// Gets the different token accounts from the tracked wallet.
-func (m *ControlConcurrency) get_token_accounts(pubKey solana.PublicKey, client *rpc.Client) error {
-	check_program_id, err := client.GetTokenAccountsByOwner(
+// Gets the different token accounts from the tracked wallet and amount for a specific mint.
+func (ns *NSReceiver) get_token_account_for_specific_mint(pubKey solana.PublicKey, mint *solana.PublicKey, ourWallet bool) error {
+	time.Sleep(time.Second * 1) //due to requests / sec limitations, we are obligued to wait
+	out_mint, err := ns.Client.GetTokenAccountsByOwner(
 		context.TODO(),
 		pubKey,
 		&rpc.GetTokenAccountsConfig{
-			Mint: solana.WrappedSol.ToPointer(),
+			Mint: mint,
 		},
 		&rpc.GetTokenAccountsOpts{
 			Encoding: solana.EncodingBase64Zstd,
@@ -152,35 +255,32 @@ func (m *ControlConcurrency) get_token_accounts(pubKey solana.PublicKey, client 
 	if err != nil {
 		return err
 	}
-	program_id := check_program_id.Value[0].Account.Owner
+	if len(out_mint.Value) == 0 {
+		ns.Log.Info().Msg("No tokens available for account")
+		return nil
+	}
 
-	out, err := client.GetTokenAccountsByOwner(
+	out_tokenbalance, err := ns.Client.GetTokenAccountBalance(
 		context.TODO(),
-		pubKey,
-		&rpc.GetTokenAccountsConfig{
-			ProgramId: program_id.ToPointer(),
-		},
-		&rpc.GetTokenAccountsOpts{
-			Encoding: solana.EncodingBase64Zstd,
-		},
+		out_mint.Value[0].Pubkey,
+		rpc.CommitmentFinalized,
 	)
 	if err != nil {
 		return err
 	}
 
-	for _, rawAccount := range out.Value {
-		var tokAcc token.Account
-
-		data := rawAccount.Account.Data.GetBinary()
-		dec := bin.NewBinDecoder(data)
-		err := dec.Decode(&tokAcc)
-		if err != nil {
-			return err
-		}
-		if tokAcc.Amount != 0 {
-			m.PersonalWallet.MintQuantityHashMap[tokAcc.Mint] = float64(tokAcc.Amount)
-		}
+	if ourWallet {
+		ns.PersonalWallet.MintQuantityHashMap[*mint] = float64(float64(*out_tokenbalance.Value.UiAmount) / 1000000000)
+		ns.PersonalWallet.TokenAccountHashMap[*mint] = out_mint.Value[0].Pubkey
+	} else {
+		ns.ExternalWallet.MintQuantityHashMap[*mint] = float64(float64(*out_tokenbalance.Value.UiAmount) / 1000000000)
+		ns.ExternalWallet.TokenAccountHashMap[*mint] = out_mint.Value[0].Pubkey
 	}
+
+	val, _ := json.Marshal(ns.PersonalWallet)
+	val2, _ := json.Marshal(ns.ExternalWallet)
+	ns.Log.Debug().Msg(string(val))
+	ns.Log.Debug().Msg(string(val2))
 
 	return nil
 }
