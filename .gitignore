@@ -1,0 +1,8 @@
+go.sum
+/send_transactions_app/.env
+/config/cryptokeys.yaml
+/config/wallets.yaml
+/config/apis.yaml
+/config/keys.yaml
+/send_transactions_app/node_modules
+/send_transactions_app/src/v1/trash.txt
