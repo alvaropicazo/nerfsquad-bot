@@ -28,6 +28,6 @@ The application sends to a Telegram Group Chat every successful transactions' de
 - **IMPORTANT** Create all configuration files under the config folder.
 
 
-<code>npx run dev</code>
+<code>npm run dev</code>
 
 <code>go run .</code>

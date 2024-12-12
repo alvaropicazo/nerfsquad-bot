@@ -8,13 +8,14 @@ import (
 	"time"
 
 	"github.com/avast/retry-go/v4"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"gopkg.in/yaml.v3"
 )
 
 // Calculates the quantit of x token that should be transferred according to our balance.
-func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExternalWallet solana.PublicKey, personalKeyExternalWallet solana.PublicKey, slippage float64) ([]TransactionToSend, error) {
+func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExternalWallet solana.PublicKey, personalKeyWallet solana.PublicKey, slippage float64) ([]TransactionToSend, error) {
 	configs := []retry.Option{
 		retry.Attempts(uint(1)),
 		retry.OnRetry(func(n uint, err error) {
@@ -48,38 +49,37 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 			tx_to_send.MintAmount = tx.MintAmount
 			tx_to_send.Slippage = slippage //*sol_to_spend + sol_to_spend
 			tx_to_send.SolAmount = sol_to_spend
-			// ns.ExternalWallet.TokenAccountHashMap[solana.MustPublicKeyFromBase58("5z3iCe53hUANTiG8Js8RjHNE2Arjik7L2CXLyr2rpump")] = solana.PublicKey{} //comment out
-			tx_to_send.TokenAccountPersonal = ns.PersonalWallet.TokenAccountHashMap[solana.WrappedSol]
-			tx_to_send.TokenAccountExternal = ns.ExternalWallet.TokenAccountHashMap[tx_to_send.MintName]
+			tx_to_send.TokenAccountPersonal = ns.PersonalWallet.TokenAccountHashMap[*solana.WrappedSol.ToPointer()]
+			tx_to_send.TokenAccountExternal = ns.ExternalWallet.TokenAccountHashMap[tx.MintName]
 
 		} else if tx.Type == "SELL" {
+			err := retry.Do(
+				func() error {
+					err := ns.get_token_account_for_specific_mint(personalKeyWallet, tx.MintName.ToPointer(), true)
+					if err != nil {
+						ns.Log.Error().Msg(err.Error())
+						return err
+					}
+					return nil
+				},
+				configs...,
+			)
+			if err != nil {
+				ns.Log.Error().Msg(err.Error())
+				return nil, err
+			}
 			if ns.PersonalWallet.MintQuantityHashMap[tx.MintName] == 0.0 {
 				continue //we skip as we dont have anything to sell
-			} else {
-				err := retry.Do(
-					func() error {
-						err := ns.get_token_account_for_specific_mint(personalKeyExternalWallet, tx.MintName.ToPointer(), true)
-						if err != nil {
-							ns.Log.Error().Msg(err.Error())
-							return err
-						}
-						return nil
-					},
-					configs...,
-				)
-				if err != nil {
-					ns.Log.Error().Msg(err.Error())
-					return nil, err
-				}
-				percentage_external := tx.MintAmount / tx.MintPre //If its 1, all stake was sold for that token.
-				mint_to_sell := ns.PersonalWallet.MintQuantityHashMap[tx.MintName] * percentage_external
-				sol_to_receive := mint_to_sell * tx.SolAmount / tx.MintAmount
-				tx_to_send.MintAmount = mint_to_sell
-				tx_to_send.SolAmount = sol_to_receive // - sol_to_receive*slippage
-				tx_to_send.Slippage = slippage
-				tx_to_send.TokenAccountPersonal = ns.PersonalWallet.TokenAccountHashMap[tx_to_send.MintName]
-				tx_to_send.TokenAccountExternal = ns.ExternalWallet.TokenAccountHashMap[solana.WrappedSol]
 			}
+			percentage_to_sell := tx.MintAmount / tx.MintPre //If its 1, all stake was sold for that token.
+			mint_to_sell := ns.PersonalWallet.MintQuantityHashMap[tx.MintName] * percentage_to_sell
+			// sol_math := tx.SolAmount / tx.MintAmount
+			sol_to_receive := mint_to_sell * tx.SolAmount / tx.MintAmount
+			tx_to_send.MintAmount = mint_to_sell
+			tx_to_send.SolAmount = sol_to_receive // - sol_to_receive*slippage
+			tx_to_send.Slippage = slippage
+			tx_to_send.TokenAccountPersonal = ns.PersonalWallet.TokenAccountHashMap[tx.MintName]
+			tx_to_send.TokenAccountExternal = ns.ExternalWallet.TokenAccountHashMap[*solana.WrappedSol.ToPointer()]
 		}
 		tx_to_send.Type = tx.Type
 		tx_to_send.ProgramId = tx.ProgramId
@@ -255,6 +255,7 @@ func (ns *NSReceiver) get_token_account_for_specific_mint(pubKey solana.PublicKe
 	if err != nil {
 		return err
 	}
+	spew.Dump(out_mint)
 	if len(out_mint.Value) == 0 {
 		ns.Log.Info().Msg("No tokens available for account")
 		return nil

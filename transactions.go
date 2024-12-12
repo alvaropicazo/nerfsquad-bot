@@ -17,9 +17,9 @@ import (
 var zero uint64
 
 // main function which calls submethods to recreate tx
-func (ns *NSReceiver) replicate_transaction(tx_available []TransactionFormatted, pubKeyExternalWallet solana.PublicKey, personalKeyExternalWallet solana.PublicKey, send_transactions_api_url string, slippage float64) error {
+func (ns *NSReceiver) replicate_transaction(tx_available []TransactionFormatted, pubKeyExternalWallet solana.PublicKey, personalKeyWallet solana.PublicKey, send_transactions_api_url string, slippage float64) error {
 
-	res, err := ns.format_data(tx_available, pubKeyExternalWallet, personalKeyExternalWallet, slippage)
+	res, err := ns.format_data(tx_available, pubKeyExternalWallet, personalKeyWallet, slippage)
 	if err != nil {
 		return err
 	}
@@ -51,11 +51,10 @@ func (ns *NSReceiver) replicate_transaction(tx_available []TransactionFormatted,
 		}
 		//Send transaction result data to Telegram group chat
 		ns.send_telegram_updates(string(responseBody))
-
 	}
 
 	//Update balance from external wallet and our wallet
-	err = ns.get_balance(ns.Client, pubKeyExternalWallet, personalKeyExternalWallet)
+	err = ns.get_balance(ns.Client, pubKeyExternalWallet, personalKeyWallet)
 	if err != nil {
 		ns.Log.Error().Msg(err.Error())
 		os.Exit(1)
@@ -70,7 +69,6 @@ func (ns *NSReceiver) replicate_transaction(tx_available []TransactionFormatted,
 func (ns *NSReceiver) check_new_tx_available(wallet_address solana.PublicKey, api_token string, sig solana.Signature, dex_wallets DexWallets) (bool, []TransactionFormatted, solana.Signature, error) {
 	var result []TransactionFormatted
 	//var new_starting_point solana.Signature
-	// sig := solana.MustSignatureFromBase58("4kvTH7YLka53MmoKUQpjELe61UkuxUdhH9V5PG5VLzw5zr7Zt1dsuN6DqteptYcKaGkHmiuvj5v5NtUP4YcK6Pr")
 
 	//Get newer signatures which are the ones to be tracked, if any.
 	out_new_sigs, err := ns.Client.GetSignaturesForAddress(
@@ -189,8 +187,8 @@ func (ns *NSReceiver) check_new_tx_available(wallet_address solana.PublicKey, ap
 
 		if len(preTransactions) > 0 && len(postTransactions) > 0 {
 			transaction_formated := TransactionFormatted{}
-			transaction_formated.Type = operation
 			transaction_formated.MintName = preTransactions[0].Mint
+			transaction_formated.Type = operation
 			if operation == "BUY" {
 				amount_obtained := mint_tx_pos - mint_tx_pre
 				sol_spent := sol_tx_pos - sol_tx_pre
@@ -207,11 +205,15 @@ func (ns *NSReceiver) check_new_tx_available(wallet_address solana.PublicKey, ap
 				transaction_formated.MintPre = mint_tx_pre
 				transaction_formated.ProgramId = programId
 			}
-			result = append(result, transaction_formated)
+			if transaction_formated.MintAmount == 0 && transaction_formated.SolAmount == 0 && transaction_formated.MintPre == 0 {
+				continue
+			} else {
+				result = append(result, transaction_formated)
+			}
 		}
 
 		check_point = signature
-		time.Sleep(time.Second * 1)
+		time.Sleep(time.Second * 10)
 	}
 	marsh, _ := json.Marshal(result)
 	ns.Log.Info().Msg("Transactions available: " + string(marsh))

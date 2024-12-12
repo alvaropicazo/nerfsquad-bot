@@ -73,15 +73,15 @@ export const createTransaction = async (req: Request, res: Response) => {
   console.log("Body received:")
   console.log(tx_info)
 
-  let min_amount_out, tokenMintExternal, tokenMintPersonal, txId, final_amount, tokenAccountPersonal, slippage
-  if (tx_info.type = "BUY") {
+  let min_amount_out, tokenMintExternal, tokenMintPersonal, txId, final_amount, tokenAccountPersonal, slippage, message
+  if (tx_info.type == "BUY") {
     tokenMintPersonal = new PublicKey('So11111111111111111111111111111111111111112')
-    // tokenMintExternal = new PublicKey('5z3iCe53hUANTiG8Js8RjHNE2Arjik7L2CXLyr2rpump') // tx_info.mintName
-    tokenMintExternal = new PublicKey(tx_info.mintName) // tx_info.mintName
+    tokenMintExternal = new PublicKey(tx_info.mintName)
     tokenAccountPersonal = new PublicKey(tx_info.tokenAccountPersonal)
     min_amount_out = tx_info.mintAmount
     slippage = tx_info.slippage
     final_amount = tx_info.solAmount * 1000000000 // 0.0002 * 1000000000
+    message = `${tx_info.type} operation of ${tx_info.mintName}. Amount spent:  ${tx_info.solAmount}`
     try {
       txId = await executeSwap(connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, final_amount, wallet as Signer, tokenAccountPersonal, slippage)
     } catch (e) {
@@ -91,15 +91,15 @@ export const createTransaction = async (req: Request, res: Response) => {
       })
       return
     }
-
   } else {
     tokenMintPersonal = new PublicKey(tx_info.mintName)
     tokenMintExternal = new PublicKey('So11111111111111111111111111111111111111112')
     slippage = tx_info.slippage
-    min_amount_out = tx_info.mintAmount
+    min_amount_out = tx_info.mintAmount * 1000000
     tokenAccountPersonal = new PublicKey(tx_info.tokenAccountPersonal)
+    message = `${tx_info.type} operation of ${tx_info.mintName}. Amount spent:  ${tx_info.mintAmount}`
     try {
-      txId = await executeSwap(connection, 'swap-base-out', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, min_amount_out, wallet as Signer, tokenAccountPersonal, slippage)
+      txId = await executeSwap(connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, min_amount_out, wallet as Signer, tokenAccountPersonal, slippage)
     } catch (e) {
       res.status(500).json({
         message: 'An error happened while sending the transaction',
@@ -110,7 +110,7 @@ export const createTransaction = async (req: Request, res: Response) => {
 
   }
   res.status(200).json({
-    message: 'Transaction sent.',
+    message: `Transaction submitted: ${message}.`,
     txId,
   })
   return
