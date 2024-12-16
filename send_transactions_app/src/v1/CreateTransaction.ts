@@ -20,7 +20,7 @@ import { exit } from 'process'
 
 interface SwapCompute {
   id: string
-  success: true
+  success: boolean
   version: 'V0' | 'V1'
   openTime?: undefined
   msg: undefined
@@ -83,17 +83,17 @@ export const createTransaction = async (req: Request, res: Response) => {
   console.log("Body received:")
   console.log(tx_info)
 
-  let min_amount_out, tokenMintExternal, tokenMintPersonal, txId, tokenAccountPersonal, slippage, message, sol_amount
+  let mint_amount, tokenMintExternal, tokenMintPersonal, txId, tokenAccountPersonal, slippage, message, sol_amount
   if (tx_info.type == "BUY") {
     tokenMintPersonal = new PublicKey('So11111111111111111111111111111111111111112')
     tokenMintExternal = new PublicKey(tx_info.mintName)
     tokenAccountPersonal = new PublicKey(tx_info.tokenAccountPersonal)
-    min_amount_out = tx_info.mintAmount
+    mint_amount = tx_info.mintAmount
     slippage = tx_info.slippage
     sol_amount = tx_info.solAmount * 1000000000 - 0.0001 // we are leaving a bit of WSOL just to keep our account
     message = `${tx_info.type} operation of ${tx_info.mintName}. Amount spent:  ${tx_info.solAmount}`
     try {
-      txId = await executeSwap(tx_info.type,connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, sol_amount, min_amount_out, wallet as Signer, tokenAccountPersonal, slippage)
+      txId = await executeSwap(tx_info.type,connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, sol_amount, mint_amount, wallet as Signer, tokenAccountPersonal, slippage)
       if (txId instanceof Error) {
         res.status(500).json({
           message: `An error happened while sending the transaction: ${txId}`,
@@ -111,12 +111,12 @@ export const createTransaction = async (req: Request, res: Response) => {
     tokenMintPersonal = new PublicKey(tx_info.mintName)
     tokenMintExternal = new PublicKey('So11111111111111111111111111111111111111112')
     slippage = tx_info.slippage
-    min_amount_out = tx_info.mintAmount * 1000000
+    mint_amount = tx_info.mintAmount * 1000000
     sol_amount = tx_info.solAmount
     tokenAccountPersonal = new PublicKey(tx_info.tokenAccountPersonal)
-    message = `${tx_info.type} operation of ${tx_info.mintName}. Amount spent:  ${tx_info.mintAmount}`
+    message = `${tx_info.type} operation of ${tx_info.mintName}. Amount spent:  ${tx_info.mintAmount}. Sol received: Around ${sol_amount} `
     try {
-      txId = await executeSwap(tx_info.type, connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, min_amount_out, sol_amount, wallet as Signer, tokenAccountPersonal, slippage)
+      txId = await executeSwap(tx_info.type, connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, mint_amount, sol_amount, wallet as Signer, tokenAccountPersonal, slippage)
       if (txId instanceof Error) {
         res.status(500).json({
           message: `An error happened while sending the transaction: ${txId}`,
@@ -161,6 +161,10 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
 
     const max_permitted = (1 - slippage) * min_amount_out
     console.log(max_permitted)
+
+    if (swapResponse.success == false) {
+      throw new Error(swapResponse.msg)
+    }
 
     if (tx_type == "BUY") {
       if (parseInt(swapResponse.data.outputAmount) / 1000000 < max_permitted){
