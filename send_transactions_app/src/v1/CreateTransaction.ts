@@ -15,6 +15,7 @@ import * as raydium from '@raydium-io/raydium-sdk-v2'
 // import  { Liquidity, LIQUIDITY_POOLS } from "@raydium-io/raydium-sdk";
 import axios from 'axios'
 import { bs58 } from '@project-serum/anchor/dist/cjs/utils/bytes'
+import { exit } from 'process'
 // import { NATIVE_MINT, getAssociatedTokenAddress } from '@solana/spl-token'
 
 interface SwapCompute {
@@ -43,6 +44,15 @@ interface SwapCompute {
   }
 }
 
+function createTimeoutSignal(timeoutMs: number): AbortSignal {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), timeoutMs);
+  return controller.signal;
+}
+
+const timeoutMs = 20000; // Timeout after 20 seconds
+const abortSignal = createTimeoutSignal(timeoutMs);
+
 export const createTransaction = async (req: Request, res: Response) => {
   //create connection to the sol net
   const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
@@ -62,7 +72,7 @@ export const createTransaction = async (req: Request, res: Response) => {
   try {
     // const dex_doc = yaml.load(fs.readFileSync('../config/wallets.yaml', 'utf8'))
     // const doc = yaml.load(fs.readFileSync('../config/cryptokeys.yaml', 'utf8'))
-    wallet = Keypair.fromSecretKey(bs58.decode(process.env.PRIV_KEY || '',))
+    wallet = Keypair.fromSecretKey(bs58.decode(process.env.PRIV_KEY || ''))
     // dex_wallet = dex_doc.dex[0]
     // pubKey = doc.personal_wallet
   } catch (e) {
@@ -73,17 +83,23 @@ export const createTransaction = async (req: Request, res: Response) => {
   console.log("Body received:")
   console.log(tx_info)
 
-  let min_amount_out, tokenMintExternal, tokenMintPersonal, txId, final_amount, tokenAccountPersonal, slippage, message
+  let min_amount_out, tokenMintExternal, tokenMintPersonal, txId, tokenAccountPersonal, slippage, message, sol_amount
   if (tx_info.type == "BUY") {
     tokenMintPersonal = new PublicKey('So11111111111111111111111111111111111111112')
     tokenMintExternal = new PublicKey(tx_info.mintName)
     tokenAccountPersonal = new PublicKey(tx_info.tokenAccountPersonal)
     min_amount_out = tx_info.mintAmount
     slippage = tx_info.slippage
-    final_amount = tx_info.solAmount * 1000000000 // 0.0002 * 1000000000
+    sol_amount = tx_info.solAmount * 1000000000 - 0.0001 // we are leaving a bit of WSOL just to keep our account
     message = `${tx_info.type} operation of ${tx_info.mintName}. Amount spent:  ${tx_info.solAmount}`
     try {
-      txId = await executeSwap(connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, final_amount, wallet as Signer, tokenAccountPersonal, slippage)
+      txId = await executeSwap(tx_info.type,connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, sol_amount, min_amount_out, wallet as Signer, tokenAccountPersonal, slippage)
+      if (txId instanceof Error) {
+        res.status(500).json({
+          message: `An error happened while sending the transaction: ${txId}`,
+        })
+        return
+      }
     } catch (e) {
       res.status(500).json({
         message: 'An error happened while sending the transaction',
@@ -96,10 +112,17 @@ export const createTransaction = async (req: Request, res: Response) => {
     tokenMintExternal = new PublicKey('So11111111111111111111111111111111111111112')
     slippage = tx_info.slippage
     min_amount_out = tx_info.mintAmount * 1000000
+    sol_amount = tx_info.solAmount
     tokenAccountPersonal = new PublicKey(tx_info.tokenAccountPersonal)
     message = `${tx_info.type} operation of ${tx_info.mintName}. Amount spent:  ${tx_info.mintAmount}`
     try {
-      txId = await executeSwap(connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, min_amount_out, wallet as Signer, tokenAccountPersonal, slippage)
+      txId = await executeSwap(tx_info.type, connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, min_amount_out, sol_amount, wallet as Signer, tokenAccountPersonal, slippage)
+      if (txId instanceof Error) {
+        res.status(500).json({
+          message: `An error happened while sending the transaction: ${txId}`,
+        })
+        return
+      }
     } catch (e) {
       res.status(500).json({
         message: 'An error happened while sending the transaction',
@@ -116,7 +139,7 @@ export const createTransaction = async (req: Request, res: Response) => {
   return
 }
 
-const executeSwap = async (connection: Connection, url: string, tokenMintPersonal: PublicKey, tokenMintExternal: PublicKey, min_amount_out: number, wallet: Signer, tokenAccountPersonal: PublicKey, slippage: number) => {
+const executeSwap = async (tx_type: string, connection: Connection, url: string, tokenMintPersonal: PublicKey, tokenMintExternal: PublicKey, amount_to_spend: number, min_amount_out: number, wallet: Signer, tokenAccountPersonal: PublicKey, slippage: number) => {
   const txVersion = 'V0' // or LEGACY
   const isV0Tx = txVersion === 'V0'
   try {
@@ -129,12 +152,25 @@ const executeSwap = async (connection: Connection, url: string, tokenMintPersona
 
     const { data: swapResponse } = await axios.get<SwapCompute>(
       `${raydium.API_URLS.SWAP_HOST
-      }/compute/${url}?inputMint=${tokenMintPersonal.toBase58()}&outputMint=${tokenMintExternal.toBase58()}&amount=${min_amount_out}&slippageBps=${slippage * 100
+      }/compute/${url}?inputMint=${tokenMintPersonal.toBase58()}&outputMint=${tokenMintExternal.toBase58()}&amount=${amount_to_spend}&slippageBps=${slippage * 100
       }&txVersion=${txVersion}`
     )
 
     console.log("Data from get endpoint")
     console.log(swapResponse)
+
+    const max_permitted = (1 - slippage) * min_amount_out
+    console.log(max_permitted)
+
+    if (tx_type == "BUY") {
+      if (parseInt(swapResponse.data.outputAmount) / 1000000 < max_permitted){
+        throw new Error('Slippage Exceeded')
+      }
+    } else {
+      if (parseInt(swapResponse.data.outputAmount) / 1000000000 < max_permitted){
+        throw new Error('Slippage Exceeded')
+      }
+    }
 
     const { data: swapTransactions } = await axios.post<{
       id: string
@@ -146,18 +182,16 @@ const executeSwap = async (connection: Connection, url: string, tokenMintPersona
       swapResponse,
       txVersion,
       wallet: wallet.publicKey.toBase58(),
-      wrapSol: true,
       inputAccount: tokenAccountPersonal.toBase58(),
       // outputAccount: isOutputSol ? undefined : outputTokenAcc?.toBase58(),
     })
-
-    console.log("Data from post transaction")
-    console.log(swapTransactions)
 
     const allTxBuf = swapTransactions.data.map((tx) => Buffer.from(tx.transaction, 'base64'))
     const allTransactions = allTxBuf.map((txBuf) =>
       isV0Tx ? VersionedTransaction.deserialize(txBuf) : Transaction.from(txBuf)
     )
+
+
 
     let idx = 0
     if (!isV0Tx) {
@@ -165,7 +199,7 @@ const executeSwap = async (connection: Connection, url: string, tokenMintPersona
         console.log(`${++idx} transaction sending...`)
         const transaction = tx as Transaction
         transaction.sign(wallet)
-        const txId = await sendAndConfirmTransaction(connection, transaction, [wallet], { skipPreflight: true })
+        const txId = await sendAndConfirmTransaction(connection, transaction, [wallet], { skipPreflight: true, abortSignal: abortSignal })
         console.log(`${++idx} transaction confirmed, txId: ${txId}`)
         return txId
       }
@@ -174,7 +208,7 @@ const executeSwap = async (connection: Connection, url: string, tokenMintPersona
         idx++
         const transaction = tx as VersionedTransaction
         transaction.sign([wallet])
-        const txId = await connection.sendTransaction(tx as VersionedTransaction, { skipPreflight: true })
+        const txId = await connection.sendTransaction(tx as VersionedTransaction, { skipPreflight: true  })
         const { lastValidBlockHeight, blockhash } = await connection.getLatestBlockhash({
           commitment: 'finalized',
         })

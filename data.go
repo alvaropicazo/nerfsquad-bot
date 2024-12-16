@@ -8,13 +8,12 @@ import (
 	"time"
 
 	"github.com/avast/retry-go/v4"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"gopkg.in/yaml.v3"
 )
 
-// Calculates the quantit of x token that should be transferred according to our balance.
+// Calculates the quantity of x token that should be transferred according to our balance.
 func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExternalWallet solana.PublicKey, personalKeyWallet solana.PublicKey, slippage float64) ([]TransactionToSend, error) {
 	configs := []retry.Option{
 		retry.Attempts(uint(1)),
@@ -27,6 +26,10 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 	for _, tx := range tx_available {
 		tx_to_send := TransactionToSend{}
 		if tx.Type == "BUY" {
+			if ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol] == 0 {
+				ns.send_telegram_updates("Tried to perform a BUY operation. Insufficient balance. Add more WSOL.")
+				continue
+			}
 			//Get Info for external wallet about the mint
 			err := retry.Do(
 				func() error {
@@ -46,7 +49,8 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 			total := tx.SolAmount + ns.ExternalWallet.PersonalBalance + float64(ns.ExternalWallet.MintQuantityHashMap[solana.WrappedSol])
 			percentage_external := tx.SolAmount / total
 			sol_to_spend := ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol] * percentage_external
-			tx_to_send.MintAmount = tx.MintAmount
+			mint_to_buy := tx.MintAmount * sol_to_spend / tx.SolAmount
+			tx_to_send.MintAmount = mint_to_buy
 			tx_to_send.Slippage = slippage //*sol_to_spend + sol_to_spend
 			tx_to_send.SolAmount = sol_to_spend
 			tx_to_send.TokenAccountPersonal = ns.PersonalWallet.TokenAccountHashMap[*solana.WrappedSol.ToPointer()]
@@ -73,10 +77,9 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 			}
 			percentage_to_sell := tx.MintAmount / tx.MintPre //If its 1, all stake was sold for that token.
 			mint_to_sell := ns.PersonalWallet.MintQuantityHashMap[tx.MintName] * percentage_to_sell
-			// sol_math := tx.SolAmount / tx.MintAmount
 			sol_to_receive := mint_to_sell * tx.SolAmount / tx.MintAmount
 			tx_to_send.MintAmount = mint_to_sell
-			tx_to_send.SolAmount = sol_to_receive // - sol_to_receive*slippage
+			tx_to_send.SolAmount = sol_to_receive
 			tx_to_send.Slippage = slippage
 			tx_to_send.TokenAccountPersonal = ns.PersonalWallet.TokenAccountHashMap[tx.MintName]
 			tx_to_send.TokenAccountExternal = ns.ExternalWallet.TokenAccountHashMap[*solana.WrappedSol.ToPointer()]
@@ -255,7 +258,7 @@ func (ns *NSReceiver) get_token_account_for_specific_mint(pubKey solana.PublicKe
 	if err != nil {
 		return err
 	}
-	spew.Dump(out_mint)
+	// spew.Dump(out_mint)
 	if len(out_mint.Value) == 0 {
 		ns.Log.Info().Msg("No tokens available for account")
 		return nil
