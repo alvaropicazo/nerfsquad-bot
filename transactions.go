@@ -68,7 +68,6 @@ func (ns *NSReceiver) replicate_transaction(tx_available []TransactionFormatted,
 // by replicate_transaction() in order to send it to the external service component to interact with Raydium
 func (ns *NSReceiver) check_new_tx_available(wallet_address solana.PublicKey, api_token string, sig solana.Signature, dex_wallets DexWallets) (bool, []TransactionFormatted, solana.Signature, error) {
 	var result []TransactionFormatted
-	//var new_starting_point solana.Signature
 
 	//Get newer signatures which are the ones to be tracked, if any.
 	out_new_sigs, err := ns.Client.GetSignaturesForAddress(
@@ -156,7 +155,6 @@ func (ns *NSReceiver) check_new_tx_available(wallet_address solana.PublicKey, ap
 		}
 
 		if check {
-			//spew.Dump(out.Meta)
 			for _, tx_pre := range out.Meta.PreTokenBalances {
 				if *tx_pre.Owner == wallet_address {
 					preTransactions = append(preTransactions, tx_pre)
@@ -185,9 +183,9 @@ func (ns *NSReceiver) check_new_tx_available(wallet_address solana.PublicKey, ap
 			}
 		}
 
-		if len(preTransactions) > 0 && len(postTransactions) > 0 {
+		if len(preTransactions) > 0 || len(postTransactions) > 0 {
 			transaction_formated := TransactionFormatted{}
-			transaction_formated.MintName = preTransactions[0].Mint
+			transaction_formated.MintName = postTransactions[0].Mint
 			transaction_formated.Type = operation
 			if operation == "BUY" {
 				amount_obtained := mint_tx_pos - mint_tx_pre
@@ -211,9 +209,8 @@ func (ns *NSReceiver) check_new_tx_available(wallet_address solana.PublicKey, ap
 				result = append(result, transaction_formated)
 			}
 		}
-
 		check_point = signature
-		time.Sleep(time.Second * 10)
+		time.Sleep(time.Second)
 	}
 	marsh, _ := json.Marshal(result)
 	ns.Log.Info().Msg("Transactions available: " + string(marsh))

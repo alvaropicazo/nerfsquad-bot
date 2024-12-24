@@ -26,7 +26,7 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 	for _, tx := range tx_available {
 		tx_to_send := TransactionToSend{}
 		if tx.Type == "BUY" {
-			if ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol] == 0 {
+			if ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol] < 0.001 {
 				ns.send_telegram_updates("Tried to perform a BUY operation. Insufficient balance. Add more WSOL.")
 				continue
 			}
