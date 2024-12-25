@@ -78,14 +78,14 @@ func main() {
 		ns.Log.Error().Msg(err.Error())
 		os.Exit(1)
 	}
-	// signature_starting_point = solana.MustSignatureFromBase58("")
+	//signature_starting_point = solana.MustSignatureFromBase58("")
 
 	//Slippage
-	slippage := 0.05
+	slippage := 0.4
 	ns.Log.Debug().Msg("Initial starting point: " + signature_starting_point.String())
 	//infinite loop checking for new transactions
 	for {
-		ns.Log.Info().Msg("Starting to check new transactions available")
+		// ns.Log.Info().Msg("Starting to check new transactions available")
 		available, tx_available, new_starting_point, _ := ns.check_new_tx_available(pubKeyExternalWallet, api_key, signature_starting_point, dex_wallets)
 		signature_starting_point = new_starting_point
 		if available {
@@ -95,7 +95,7 @@ func main() {
 			//go thread to process transaction
 			go ns.replicate_transaction(tx_available, pubKeyExternalWallet, personalKeyWallet, send_transactions_api_url, slippage)
 		}
-		time.Sleep(time.Second * 10)
+		time.Sleep(time.Second * 3)
 	}
 
 }

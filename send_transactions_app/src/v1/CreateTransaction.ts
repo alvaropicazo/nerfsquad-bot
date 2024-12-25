@@ -17,7 +17,8 @@ import axios from 'axios'
 import { bs58 } from '@project-serum/anchor/dist/cjs/utils/bytes'
 import { exit } from 'process'
 // import { NATIVE_MINT, getAssociatedTokenAddress } from '@solana/spl-token'
-
+import dotenv from 'dotenv'
+dotenv.config()
 interface SwapCompute {
   id: string
   success: boolean
@@ -52,6 +53,7 @@ function createTimeoutSignal(timeoutMs: number): AbortSignal {
 
 const timeoutMs = 20000; // Timeout after 20 seconds
 const abortSignal = createTimeoutSignal(timeoutMs);
+const solscan_url = 'https://solscan.io/tx'
 
 export const createTransaction = async (req: Request, res: Response) => {
   //create connection to the sol net
@@ -90,8 +92,8 @@ export const createTransaction = async (req: Request, res: Response) => {
     tokenAccountPersonal = new PublicKey(tx_info.tokenAccountPersonal)
     mint_amount = tx_info.mintAmount
     slippage = tx_info.slippage
-    sol_amount = tx_info.solAmount * 1000000000 - 0.0001 // we are leaving a bit of WSOL just to keep our account
-    message = `${tx_info.type} operation of ${tx_info.mintName}. Amount spent:  ${tx_info.solAmount}`
+    sol_amount = ( tx_info.solAmount - 0.00001 ) * 1000000000 // we are leaving a bit of WSOL just to keep our account
+    message = `${tx_info.type} operation of ${tx_info.mintName}. Amount spent:  ${tx_info.solAmount}. `
     try {
       txId = await executeSwap(tx_info.type,connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, sol_amount, mint_amount, wallet as Signer, tokenAccountPersonal, slippage)
       if (txId instanceof Error) {
@@ -133,8 +135,7 @@ export const createTransaction = async (req: Request, res: Response) => {
 
   }
   res.status(200).json({
-    message: `Transaction submitted: ${message}.`,
-    txId,
+    message: `Transaction submitted: ${message}.` + `${solscan_url}/${txId}`,
   })
   return
 }
@@ -166,15 +167,16 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
       throw new Error(swapResponse.msg)
     }
 
-    if (tx_type == "BUY") {
-      if (parseInt(swapResponse.data.outputAmount) / 1000000 < max_permitted){
-        throw new Error('Slippage Exceeded')
-      }
-    } else {
-      if (parseInt(swapResponse.data.outputAmount) / 1000000000 < max_permitted){
-        throw new Error('Slippage Exceeded')
-      }
-    }
+    //Our own slippage check
+    // if (tx_type == "BUY") {
+    //   if (parseInt(swapResponse.data.outputAmount) / 1000000 < max_permitted){
+    //     throw new Error('Slippage Exceeded')
+    //   }
+    // } else {
+    //   if (parseInt(swapResponse.data.outputAmount) / 1000000000 < max_permitted){
+    //     throw new Error('Slippage Exceeded')
+    //   }
+    // }
 
     const { data: swapTransactions } = await axios.post<{
       id: string
@@ -182,7 +184,7 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
       success: boolean
       data: { transaction: string }[]
     }>(`${raydium.API_URLS.SWAP_HOST}/transaction/${url}`, {
-      computeUnitPriceMicroLamports: String(data.data.default.m),
+      computeUnitPriceMicroLamports: String(data.data.default.h),
       swapResponse,
       txVersion,
       wallet: wallet.publicKey.toBase58(),
@@ -194,8 +196,6 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
     const allTransactions = allTxBuf.map((txBuf) =>
       isV0Tx ? VersionedTransaction.deserialize(txBuf) : Transaction.from(txBuf)
     )
-
-
 
     let idx = 0
     if (!isV0Tx) {
@@ -217,16 +217,17 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
           commitment: 'finalized',
         })
         console.log(`${idx} transaction sending..., txId: ${txId}`)
-        const res = await connection.confirmTransaction(
-          {
-            blockhash,
-            lastValidBlockHeight,
-            signature: txId,
-          },
-          'confirmed'
-        )
-        console.log(`${idx} transaction confirmed`)
-        return res
+        return txId
+        // const res = await connection.confirmTransaction(
+        //   {
+        //     blockhash,
+        //     lastValidBlockHeight,
+        //     signature: txId,
+        //   },
+        //   'confirmed'
+        // )
+        // console.log(`${idx} transaction confirmed`)
+        // return res
       }
     }
   }

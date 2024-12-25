@@ -8,8 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"time"
-
+	
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 )
@@ -73,7 +72,7 @@ func (ns *NSReceiver) check_new_tx_available(wallet_address solana.PublicKey, ap
 	out_new_sigs, err := ns.Client.GetSignaturesForAddress(
 		context.TODO(),
 		wallet_address,
-		&rpc.GetSignaturesForAddressOpts{Until: sig}, //replace with signature param
+		&rpc.GetSignaturesForAddressOpts{Until: sig, Commitment: "confirmed"}, //replace with signature param
 	)
 	if err != nil {
 		ns.Log.Error().Msg(err.Error())
@@ -93,7 +92,7 @@ func (ns *NSReceiver) check_new_tx_available(wallet_address solana.PublicKey, ap
 		signatures = append(signatures, new_sig.Signature)
 	}
 
-	ns.Log.Info().Msg("SIGNATURES: " + strconv.Itoa(len(signatures)))
+	// ns.Log.Info().Msg("SIGNATURES: " + strconv.Itoa(len(signatures)))
 	check_point := sig
 	for i, signature := range signatures {
 		out, err := ns.Client.GetTransaction(
@@ -210,11 +209,10 @@ func (ns *NSReceiver) check_new_tx_available(wallet_address solana.PublicKey, ap
 			}
 		}
 		check_point = signature
-		time.Sleep(time.Second)
 	}
-	marsh, _ := json.Marshal(result)
-	ns.Log.Info().Msg("Transactions available: " + string(marsh))
 	if len(result) != 0 {
+		marsh, _ := json.Marshal(result)
+		ns.Log.Info().Msg("Transactions available: " + string(marsh))
 		return true, result, check_point, nil
 	} else {
 		return false, result, check_point, nil

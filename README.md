@@ -13,21 +13,34 @@ The application sends to a Telegram Group Chat every successful transactions' de
 
 - <code>apis.yaml</code>: Contains Endpoints to obtain information about the wallet to track and the DEX to which transactions will be sent.
 - <code>keys.yaml</code>: API Keys.
-- <code>wallets.yaml</code>: It contains the addresses of the wallets of the different DEXs with which the wallet we want to track interacts, and <code>external_wallet</code> is the wallet selected to replicate the transactions.
-- <code>cryptokeys.yaml</code>: It contains the addresses of the wallets of the different DEXs with which the wallet we want to track interacts, and <code>external_wallet</code> is the wallet selected to replicate the transactions.
+- <code>wallets.yaml</code>: It contains the addresses of the wallets of the different DEXs. <code>external_wallet</code> is the wallet selected to replicate the transactions.
+
+
+```
+dex:
+    - xxxxxxxxxx
+external_wallet: xxxxxxxx
+```
+
+- <code>cryptokeys.yaml</code>: It contains the addresses of our own wallets, and <code>personal_wallet</code> is the wallet selected to replicate the transactions.
+
+```
+personal_wallet: xxxxxxxx
+```
 
 ## How to run solana-bot
 
 ### PRE-REQUISITES
 
-- Have go installed
-- Set PRIV_KEY env var.
+- Have go 1.23 installed
+- Set PRIV_KEY env var in a .env file under /send_transactions_app folder.
 - Have node installed
+- Have typescript installed
 - Run <code>npm install</code> in the send_transactions_app folder
 
-- **IMPORTANT** Create all configuration files under the config folder.
+- **IMPORTANT:** Create all previous configuration files under the config folder.
 
 
-<code>npm run dev</code>
+<code>npm run dev</code> in the /send_transactions_app folder
 
-<code>go run .</code>
+<code>go run .</code> in ~/

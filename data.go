@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
+	"math"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/avast/retry-go/v4"
@@ -26,36 +29,35 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 	for _, tx := range tx_available {
 		tx_to_send := TransactionToSend{}
 		if tx.Type == "BUY" {
-			if ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol] < 0.001 {
+			if ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol] < 0.035 { //0.035 is the min amount to spend to be able to execute tx successfully
 				ns.send_telegram_updates("Tried to perform a BUY operation. Insufficient balance. Add more WSOL.")
 				continue
 			}
 			//Get Info for external wallet about the mint
-			err := retry.Do(
-				func() error {
-					err := ns.get_token_account_for_specific_mint(pubKeyExternalWallet, tx.MintName.ToPointer(), false)
-					if err != nil {
-						ns.Log.Error().Msg(err.Error())
-						return err
-					}
-					return nil
-				},
-				configs...,
-			)
-			if err != nil {
-				ns.Log.Error().Msg(err.Error())
-				return nil, err
-			}
-			total := tx.SolAmount + ns.ExternalWallet.PersonalBalance + float64(ns.ExternalWallet.MintQuantityHashMap[solana.WrappedSol])
+			// err := retry.Do(
+			// 	func() error {
+			// 		err := ns.get_token_account_for_specific_mint(pubKeyExternalWallet, tx.MintName.ToPointer(), false)
+			// 		if err != nil {
+			// 			ns.Log.Error().Msg(err.Error())
+			// 			return err
+			// 		}
+			// 		return nil
+			// 	},
+			// 	configs...,
+			// )
+			// if err != nil {
+			// 	ns.Log.Error().Msg(err.Error())
+			// 	return nil, err
+			// }
+			total := ns.ExternalWallet.PersonalBalance + float64(ns.ExternalWallet.MintQuantityHashMap[solana.WrappedSol])
 			percentage_external := tx.SolAmount / total
-			sol_to_spend := ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol] * percentage_external
+			sol_to_spend := math.Max(ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol]*percentage_external, 0.035)
 			mint_to_buy := tx.MintAmount * sol_to_spend / tx.SolAmount
 			tx_to_send.MintAmount = mint_to_buy
 			tx_to_send.Slippage = slippage //*sol_to_spend + sol_to_spend
-			tx_to_send.SolAmount = sol_to_spend
+			tx_to_send.SolAmount = convert_num(sol_to_spend)
 			tx_to_send.TokenAccountPersonal = ns.PersonalWallet.TokenAccountHashMap[*solana.WrappedSol.ToPointer()]
 			tx_to_send.TokenAccountExternal = ns.ExternalWallet.TokenAccountHashMap[tx.MintName]
-
 		} else if tx.Type == "SELL" {
 			err := retry.Do(
 				func() error {
@@ -76,10 +78,17 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 				continue //we skip as we dont have anything to sell
 			}
 			percentage_to_sell := tx.MintAmount / tx.MintPre //If its 1, all stake was sold for that token.
-			mint_to_sell := ns.PersonalWallet.MintQuantityHashMap[tx.MintName] * percentage_to_sell
+			mint_to_sell := float64(ns.PersonalWallet.MintQuantityHashMap[tx.MintName]) * percentage_to_sell
 			sol_to_receive := mint_to_sell * tx.SolAmount / tx.MintAmount
-			tx_to_send.MintAmount = mint_to_sell
-			tx_to_send.SolAmount = sol_to_receive
+			tx_to_send.MintAmount = convert_num(mint_to_sell)
+			tx_to_send.SolAmount = convert_num(sol_to_receive)
+			if tx_to_send.SolAmount < 0.025 {
+				ns.Log.Info().Msg("Due to low rates, half of the stake will be sold")
+				mint_to_sell = float64(ns.PersonalWallet.MintQuantityHashMap[tx.MintName]) * 0.5 //we sell half of it due to low numbers as we need to make sure tx are submitted correctly
+				sol_to_receive = mint_to_sell * tx.SolAmount / tx.MintAmount
+				tx_to_send.MintAmount = convert_num(mint_to_sell)
+				tx_to_send.SolAmount = convert_num(sol_to_receive)
+			}
 			tx_to_send.Slippage = slippage
 			tx_to_send.TokenAccountPersonal = ns.PersonalWallet.TokenAccountHashMap[tx.MintName]
 			tx_to_send.TokenAccountExternal = ns.ExternalWallet.TokenAccountHashMap[*solana.WrappedSol.ToPointer()]
@@ -274,10 +283,10 @@ func (ns *NSReceiver) get_token_account_for_specific_mint(pubKey solana.PublicKe
 	}
 
 	if ourWallet {
-		ns.PersonalWallet.MintQuantityHashMap[*mint] = float64(float64(*out_tokenbalance.Value.UiAmount) / 1000000000)
+		ns.PersonalWallet.MintQuantityHashMap[*mint] = float64(float64(*out_tokenbalance.Value.UiAmount))
 		ns.PersonalWallet.TokenAccountHashMap[*mint] = out_mint.Value[0].Pubkey
 	} else {
-		ns.ExternalWallet.MintQuantityHashMap[*mint] = float64(float64(*out_tokenbalance.Value.UiAmount) / 1000000000)
+		ns.ExternalWallet.MintQuantityHashMap[*mint] = float64(float64(*out_tokenbalance.Value.UiAmount))
 		ns.ExternalWallet.TokenAccountHashMap[*mint] = out_mint.Value[0].Pubkey
 	}
 
@@ -287,4 +296,13 @@ func (ns *NSReceiver) get_token_account_for_specific_mint(pubKey solana.PublicKe
 	ns.Log.Debug().Msg(string(val2))
 
 	return nil
+}
+
+func convert_num(number float64) float64 {
+	decimalPlaces := fmt.Sprintf("%f", number-math.Floor(number)) // produces 0.xxxx0000
+	step, _ := strconv.ParseFloat(decimalPlaces, 64)
+	num := number - step
+	extra := math.RoundToEven(num)
+	finale := extra + step
+	return finale
 }
