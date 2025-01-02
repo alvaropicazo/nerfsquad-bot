@@ -1,6 +1,6 @@
 module solana_bot
 
-go 1.21.3
+go 1.23.0
 
 require (
 	github.com/gagliardetto/solana-go v1.12.0
