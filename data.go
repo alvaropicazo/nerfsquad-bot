@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -17,7 +19,7 @@ import (
 )
 
 // Calculates the quantity of x token that should be transferred according to our balance.
-func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExternalWallet solana.PublicKey, personalKeyWallet solana.PublicKey, slippage float64) ([]TransactionToSend, error) {
+func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExternalWallet solana.PublicKey, personalKeyWallet solana.PublicKey) ([]TransactionToSend, error) {
 	configs := []retry.Option{
 		retry.Attempts(uint(1)),
 		retry.OnRetry(func(n uint, err error) {
@@ -30,7 +32,8 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 		tx_to_send := TransactionToSend{}
 		if tx.Type == "BUY" {
 			if ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol] < 0.035 { //0.035 is the min amount to spend to be able to execute tx successfully
-				ns.send_telegram_updates("Tried to perform a BUY operation. Insufficient balance. Add more WSOL.")
+				str, _ := json.Marshal(ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol])
+				ns.send_telegram_updates("Tried to perform a BUY operation. Insufficient balance. Add more WSOL. Current balance: " + string(str))
 				continue
 			}
 			//Get Info for external wallet about the mint
@@ -49,12 +52,26 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 			// 	ns.Log.Error().Msg(err.Error())
 			// 	return nil, err
 			// }
+
+			//Get Token Supply
+			token_supply, err := ns.get_token_supply(tx.MintName)
+			if err != nil {
+				ns.Log.Error().Msg(err.Error())
+				return nil, err
+			}
+
+			//Check wether we should wait x seconds due to market cap limitations or not
+			percentage_owned := tx.MintAmount / token_supply
+			if percentage_owned > 0.01 {
+				ns.Log.Info().Msg("Wallet is owning more than 0.01%")
+				time.Sleep(time.Second * 90)
+			}
 			total := ns.ExternalWallet.PersonalBalance + float64(ns.ExternalWallet.MintQuantityHashMap[solana.WrappedSol])
 			percentage_external := tx.SolAmount / total
 			sol_to_spend := math.Max(ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol]*percentage_external, 0.035)
 			mint_to_buy := tx.MintAmount * sol_to_spend / tx.SolAmount
 			tx_to_send.MintAmount = mint_to_buy
-			tx_to_send.Slippage = slippage //*sol_to_spend + sol_to_spend
+			tx_to_send.Slippage = ns.Slippage //*sol_to_spend + sol_to_spend
 			tx_to_send.SolAmount = convert_num(sol_to_spend)
 			tx_to_send.TokenAccountPersonal = ns.PersonalWallet.TokenAccountHashMap[*solana.WrappedSol.ToPointer()]
 			tx_to_send.TokenAccountExternal = ns.ExternalWallet.TokenAccountHashMap[tx.MintName]
@@ -84,18 +101,19 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 			tx_to_send.SolAmount = convert_num(sol_to_receive)
 			if tx_to_send.SolAmount < 0.025 {
 				ns.Log.Info().Msg("Due to low rates, half of the stake will be sold")
-				mint_to_sell = float64(ns.PersonalWallet.MintQuantityHashMap[tx.MintName]) * 0.5 //we sell half of it due to low numbers as we need to make sure tx are submitted correctly
+				mint_to_sell = float64(ns.PersonalWallet.MintQuantityHashMap[tx.MintName]) * 0.6 //we sell 0.6 of it due to low numbers as we need to make sure tx are submitted correctly
 				sol_to_receive = mint_to_sell * tx.SolAmount / tx.MintAmount
 				tx_to_send.MintAmount = convert_num(mint_to_sell)
 				tx_to_send.SolAmount = convert_num(sol_to_receive)
 			}
-			tx_to_send.Slippage = slippage
+			tx_to_send.Slippage = ns.Slippage
 			tx_to_send.TokenAccountPersonal = ns.PersonalWallet.TokenAccountHashMap[tx.MintName]
 			tx_to_send.TokenAccountExternal = ns.ExternalWallet.TokenAccountHashMap[*solana.WrappedSol.ToPointer()]
 		}
 		tx_to_send.Type = tx.Type
 		tx_to_send.ProgramId = tx.ProgramId
 		tx_to_send.MintName = tx.MintName
+		tx_to_send.CurrentPrice = ns.SolPrice
 		res = append(res, tx_to_send)
 	}
 	marsh, _ := json.Marshal(res)
@@ -104,19 +122,19 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 }
 
 // Retrieves the keys to be used for the apis.
-func get_api_key() (string, error) {
+func get_api_key() (map[string]interface{}, error) {
 	keys_file := make(map[string]interface{})
 
 	keys_byte, err := os.ReadFile("./config/keys.yaml")
 	if err != nil {
-		return "yamlFile.Get err #%v ", err
+		return nil, err
 	}
 	err = yaml.Unmarshal(keys_byte, keys_file)
 	if err != nil {
-		return "Unmarshal: %v", err
+		return nil, err
 	}
 
-	return keys_file["keys"].([]interface{})[0].(string), nil
+	return keys_file, nil
 }
 
 // Retrieves the apis that will be used to get data about the wallet to track / dex to send transactions.
@@ -298,6 +316,22 @@ func (ns *NSReceiver) get_token_account_for_specific_mint(pubKey solana.PublicKe
 	return nil
 }
 
+// Retrieves Token Supply for specific token.
+func (ns *NSReceiver) get_token_supply(token_address solana.PublicKey) (float64, error) {
+	out_sol, err := ns.Client.GetTokenSupply(
+		context.TODO(),
+		token_address,
+		rpc.CommitmentFinalized,
+	)
+	if err != nil {
+		return 0.0, err
+	}
+
+	token_supply := *out_sol.Value.UiAmount
+
+	return token_supply, nil
+}
+
 func convert_num(number float64) float64 {
 	decimalPlaces := fmt.Sprintf("%f", number-math.Floor(number)) // produces 0.xxxx0000
 	step, _ := strconv.ParseFloat(decimalPlaces, 64)
@@ -305,4 +339,31 @@ func convert_num(number float64) float64 {
 	extra := math.RoundToEven(num)
 	finale := extra + step
 	return finale
+}
+
+// Retrieves Token Supply for specific token.
+func (ns *NSReceiver) get_current_solana_price(key string) error {
+
+	url := "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
+
+	req, _ := http.NewRequest("GET", url, nil)
+
+	req.Header.Add("accept", "application/json")
+	req.Header.Add("x-cg-demo-api-key", key)
+
+	res, _ := http.DefaultClient.Do(req)
+
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+
+	var tokenInfo TokenInfo
+
+	err := json.Unmarshal(body, &tokenInfo)
+	if err != nil {
+		return err
+	}
+
+	ns.SolPrice = tokenInfo.Solana["usd"]
+
+	return nil
 }

@@ -27,7 +27,7 @@ func main() {
 
 	ns.Log = log
 
-	api_key, err := get_api_key()
+	keys_obj, err := get_api_key()
 	if err != nil {
 		ns.Log.Error().Msg(err.Error())
 		os.Exit(1)
@@ -56,7 +56,9 @@ func main() {
 		dex_wallets.DexArray = append(dex_wallets.DexArray, wallet.(string))
 	}
 
-	endpoint := apis_obj["url"].(map[string]interface{})["instantnodes"].(string) + api_key
+	instantnodes_key := keys_obj["keys"].(map[string]interface{})["instantnodes"].(string)
+	coingecko_key := keys_obj["keys"].(map[string]interface{})["coingecko"].(string)
+	endpoint := apis_obj["url"].(map[string]interface{})["instantnodes"].(string) + instantnodes_key
 	send_transactions_api_url := apis_obj["url"].(map[string]interface{})["send_transactions_app"].(string)
 	ns.Client = rpc.New(endpoint)
 	pubKeyExternalWallet := solana.MustPublicKeyFromBase58(wallet_obj["external_wallet"].(string))
@@ -72,8 +74,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	ticker := time.NewTicker(10 * time.Minute)
+
+	// Use a goroutine to run the function periodically to keep updating SOL price
+	go func() {
+		for range ticker.C { // Channel receives a tick every 10 minutes
+			err := ns.get_current_solana_price(coingecko_key)
+			if err != nil {
+				ns.Log.Error().Msg(err.Error())
+			}
+		}
+	}()
+
 	//First time getting txs to get latest signature and start from there
-	signature_starting_point, err := ns.get_starting_point(pubKeyExternalWallet, api_key, current_date)
+	signature_starting_point, err := ns.get_starting_point(pubKeyExternalWallet, instantnodes_key, current_date)
 	if err != nil {
 		ns.Log.Error().Msg(err.Error())
 		os.Exit(1)
@@ -81,19 +95,19 @@ func main() {
 	//signature_starting_point = solana.MustSignatureFromBase58("")
 
 	//Slippage
-	slippage := 0.4
+	ns.Slippage = 0.4
 	ns.Log.Debug().Msg("Initial starting point: " + signature_starting_point.String())
 	//infinite loop checking for new transactions
 	for {
 		// ns.Log.Info().Msg("Starting to check new transactions available")
-		available, tx_available, new_starting_point, _ := ns.check_new_tx_available(pubKeyExternalWallet, api_key, signature_starting_point, dex_wallets)
+		available, tx_available, new_starting_point, _ := ns.check_new_tx_available(pubKeyExternalWallet, instantnodes_key, signature_starting_point, dex_wallets)
 		signature_starting_point = new_starting_point
 		if available {
 			ns.Log.Info().Msg("Available transactions found")
 			ns.Mu.Lock()
 			ns.Log.Info().Msg("Running thread to replicate transactions")
 			//go thread to process transaction
-			go ns.replicate_transaction(tx_available, pubKeyExternalWallet, personalKeyWallet, send_transactions_api_url, slippage)
+			go ns.replicate_transaction(tx_available, pubKeyExternalWallet, personalKeyWallet, send_transactions_api_url)
 		}
 		time.Sleep(time.Second * 3)
 	}

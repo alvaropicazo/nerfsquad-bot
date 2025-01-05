@@ -30,6 +30,7 @@ type TransactionToSend struct {
 	ProgramId            solana.PublicKey `json:"programId"`
 	TokenAccountExternal solana.PublicKey `json:"tokenAccountExternal"`
 	TokenAccountPersonal solana.PublicKey `json:"tokenAccountPersonal"`
+	CurrentPrice         float64          `json:"currentPrice"`
 }
 
 type NSReceiver struct {
@@ -39,6 +40,8 @@ type NSReceiver struct {
 	Client          *rpc.Client
 	Log             zerolog.Logger
 	ExternalWallet  ExternalWalletData
+	SolPrice        float64
+	Slippage        float64
 }
 
 type PersonalWalletData struct {
@@ -51,4 +54,12 @@ type ExternalWalletData struct {
 	PersonalBalance     float64
 	MintQuantityHashMap map[solana.PublicKey]float64
 	TokenAccountHashMap map[solana.PublicKey]solana.PublicKey
+}
+
+type TokenInfo struct {
+	Solana map[string]float64 `json:"solana"`
+}
+
+type TxResponse struct {
+	Message string `json:"message"`
 }
