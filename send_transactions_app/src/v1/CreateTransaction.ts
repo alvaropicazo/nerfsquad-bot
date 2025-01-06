@@ -50,6 +50,10 @@ type TxRes = {
   solFromSell: number
 } | undefined
 
+type KeyObj = {
+  personal_wallet: string
+} | undefined
+
 function createTimeoutSignal(timeoutMs: number): AbortSignal {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), timeoutMs);
@@ -75,13 +79,14 @@ export const createTransaction = async (req: Request, res: Response) => {
     return
   }
   //get address info from yaml files
-  let wallet
+  let wallet,pubKey
   try {
-    // const dex_doc = yaml.load(fs.readFileSync('../config/wallets.yaml', 'utf8'))
-    // const doc = yaml.load(fs.readFileSync('../config/cryptokeys.yaml', 'utf8'))
+    const doc = yaml.load(fs.readFileSync('../config/cryptokeys.yaml', 'utf8'))
     wallet = Keypair.fromSecretKey(bs58.decode(process.env.PRIV_KEY || ''))
-    // dex_wallet = dex_doc.dex[0]
-    // pubKey = doc.personal_wallet
+    let keyObj = doc as KeyObj
+    if (keyObj != undefined) {
+      pubKey = keyObj.personal_wallet
+    }
   } catch (e) {
     console.log(e);
   }
@@ -101,7 +106,7 @@ export const createTransaction = async (req: Request, res: Response) => {
     sol_amount = ( tx_info.solAmount - 0.00001 ) * 1000000000 // we are leaving a bit of WSOL just to keep our account
     current_price = tx_info.currentPrice
     amount_in_usd = Math.round(tx_info.solAmount * current_price * 100) / 100
-    message = `${tx_info.type} operation of ${tx_info.mintName}. Sol spent: ${tx_info.solAmount}.(${amount_in_usd}$).`
+    message = `Wallet ${pubKey}: ${tx_info.type} operation of ${tx_info.mintName}. Sol spent:${tx_info.solAmount} (${amount_in_usd}$).`
     try {
       obj = await executeSwap(tx_info.type,connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, sol_amount, mint_amount, wallet as Signer, tokenAccountPersonal, slippage)
       if (obj instanceof Error) {
@@ -124,7 +129,7 @@ export const createTransaction = async (req: Request, res: Response) => {
     sol_amount = tx_info.solAmount
     tokenAccountPersonal = new PublicKey(tx_info.tokenAccountPersonal)
     current_price = tx_info.currentPrice
-    message = `${tx_info.type} operation of ${tx_info.mintName}. Amount sold: ${tx_info.mintAmount}.`
+    message = `Wallet ${pubKey}: ${tx_info.type} operation of ${tx_info.mintName}. Amount sold:${tx_info.mintAmount}.`
     try {
       obj = await executeSwap(tx_info.type, connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, mint_amount, sol_amount, wallet as Signer, tokenAccountPersonal, slippage)
       if (obj instanceof Error) {
@@ -136,7 +141,7 @@ export const createTransaction = async (req: Request, res: Response) => {
       if (obj != undefined) {
         let sol_from_sell_round = Math.round(obj.solFromSell * 100) / 100
         let sol_obtained = Math.round(obj.solFromSell * current_price * 100) / 100
-        message = message + ` Sol received: ${sol_from_sell_round}.(${sol_obtained}$).`
+        message = message + ` Sol received:${sol_from_sell_round} (${sol_obtained}$).`
       }
     } catch (e) {
       res.status(500).json({
