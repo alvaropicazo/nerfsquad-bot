@@ -125,7 +125,7 @@ export const createTransaction = async (req: Request, res: Response) => {
     tokenMintPersonal = new PublicKey(tx_info.mintName)
     tokenMintExternal = new PublicKey('So11111111111111111111111111111111111111112')
     slippage = tx_info.slippage
-    mint_amount = tx_info.mintAmount * 1000000
+    mint_amount = tx_info.mintAmount * 1000000000
     sol_amount = tx_info.solAmount
     tokenAccountPersonal = new PublicKey(tx_info.tokenAccountPersonal)
     current_price = tx_info.currentPrice
@@ -193,7 +193,7 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
       // }
     } else {
       sol_from_sell = parseInt(swapResponse.data.outputAmount) / 1000000000
-      // if (parseInt(swapResponse.data.outputAmount) / 1000000000 < max_permitted){
+      // if (parseInt(swapResponse.data.outputAmount) / 1000000 < max_permitted){
       //   throw new Error('Slippage Exceeded')
       // }
     }
@@ -202,6 +202,7 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
       id: string
       version: string
       success: boolean
+      msg: string
       data: { transaction: string }[]
     }>(`${raydium.API_URLS.SWAP_HOST}/transaction/${url}`, {
       computeUnitPriceMicroLamports: String(data.data.default.h),
@@ -212,6 +213,9 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
       // outputAccount: isOutputSol ? undefined : outputTokenAcc?.toBase58(),
     })
 
+    if (swapTransactions.success == false) {
+      throw new Error(swapTransactions.msg)
+    }
     const allTxBuf = swapTransactions.data.map((tx) => Buffer.from(tx.transaction, 'base64'))
     const allTransactions = allTxBuf.map((txBuf) =>
       isV0Tx ? VersionedTransaction.deserialize(txBuf) : Transaction.from(txBuf)

@@ -63,7 +63,7 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 			//Check wether we should wait x seconds due to market cap limitations or not
 			percentage_owned := tx.MintAmount / token_supply
 			if percentage_owned > 0.01 {
-				ns.Log.Info().Msg("Wallet is owning more than 0.01%")
+				ns.Log.Info().Msg("Wallet is owning more than 1%")
 				time.Sleep(time.Second * 90)
 			}
 			total := ns.ExternalWallet.PersonalBalance + float64(ns.ExternalWallet.MintQuantityHashMap[solana.WrappedSol])
