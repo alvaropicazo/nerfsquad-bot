@@ -207,9 +207,11 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
     }>(`${raydium.API_URLS.SWAP_HOST}/transaction/${url}`, {
       computeUnitPriceMicroLamports: String(data.data.default.h),
       swapResponse,
+      wrapSol:true,
+      unwrapSol:true,
       txVersion,
       wallet: wallet.publicKey.toBase58(),
-      inputAccount: tokenAccountPersonal.toBase58(),
+      //inputAccount: tokenAccountPersonal.toBase58(),
       // outputAccount: isOutputSol ? undefined : outputTokenAcc?.toBase58(),
     })
 

@@ -31,9 +31,9 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 	for _, tx := range tx_available {
 		tx_to_send := TransactionToSend{}
 		if tx.Type == "BUY" {
-			if ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol] < 0.035 { //0.035 is the min amount to spend to be able to execute tx successfully
-				str, _ := json.Marshal(ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol])
-				ns.send_telegram_updates("Tried to perform a BUY operation. Insufficient balance. Add more WSOL. Current balance: " + string(str))
+			if ns.PersonalWallet.PersonalBalance < 0.035 { //0.035 is the min amount to spend to be able to execute tx successfully
+				str, _ := json.Marshal(ns.PersonalWallet.PersonalBalance)
+				ns.send_telegram_updates("Tried to perform a BUY operation. Insufficient balance. Add more SOL. Current balance: " + string(str))
 				continue
 			}
 			//Get Info for external wallet about the mint
@@ -66,15 +66,15 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 				ns.Log.Info().Msg("Wallet is owning more than 1%")
 				time.Sleep(time.Second * 90)
 			}
-			total := ns.ExternalWallet.PersonalBalance + float64(ns.ExternalWallet.MintQuantityHashMap[solana.WrappedSol])
+			total := ns.ExternalWallet.PersonalBalance
 			percentage_external := tx.SolAmount / total
-			sol_to_spend := math.Max(ns.PersonalWallet.MintQuantityHashMap[solana.WrappedSol]*percentage_external, 0.035)
+			sol_to_spend := math.Max(ns.PersonalWallet.PersonalBalance*percentage_external, 0.035)
 			mint_to_buy := tx.MintAmount * sol_to_spend / tx.SolAmount
 			tx_to_send.MintAmount = mint_to_buy
 			tx_to_send.Slippage = ns.Slippage //*sol_to_spend + sol_to_spend
 			tx_to_send.SolAmount = convert_num(sol_to_spend)
-			tx_to_send.TokenAccountPersonal = ns.PersonalWallet.TokenAccountHashMap[*solana.WrappedSol.ToPointer()]
-			tx_to_send.TokenAccountExternal = ns.ExternalWallet.TokenAccountHashMap[tx.MintName]
+			tx_to_send.TokenAccountPersonal = *solana.WrappedSol.ToPointer()
+			tx_to_send.TokenAccountExternal = ns.ExternalWallet.TokenAccountHashMap[tx.MintName] //TODO: Remove it
 		} else if tx.Type == "SELL" {
 			err := retry.Do(
 				func() error {
@@ -108,7 +108,7 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 			}
 			tx_to_send.Slippage = ns.Slippage
 			tx_to_send.TokenAccountPersonal = ns.PersonalWallet.TokenAccountHashMap[tx.MintName]
-			tx_to_send.TokenAccountExternal = ns.ExternalWallet.TokenAccountHashMap[*solana.WrappedSol.ToPointer()]
+			tx_to_send.TokenAccountExternal = *solana.WrappedSol.ToPointer()
 		}
 		tx_to_send.Type = tx.Type
 		tx_to_send.ProgramId = tx.ProgramId
@@ -227,44 +227,11 @@ func (ns *NSReceiver) get_balance(client *rpc.Client, external_wallet_address so
 	//Get SOL from our wallet and from the external wallet being tracked
 	ns.PersonalWallet.PersonalBalance = float64(float64(out_sol_personal.Value) / 1000000000)
 	ns.ExternalWallet.PersonalBalance = float64(float64(out_sol.Value) / 1000000000)
-	configs := []retry.Option{
-		retry.Attempts(uint(3)),
-		retry.OnRetry(func(n uint, err error) {
-			log.Printf("Retry request %d to and get error: %v", n+1, err)
-		}),
-		retry.Delay(time.Second),
-	}
-	//due to requests / sec limitations, we are obligued to retry in case it fails (too many attempts / sec)
-	err = retry.Do(
-		func() error {
-			err := ns.get_token_account_for_specific_mint(external_wallet_address, solana.WrappedSol.ToPointer(), false)
-			if err != nil {
-				ns.Log.Error().Msg(err.Error())
-				return err
-			}
-			return nil
-		},
-		configs...,
-	)
-	if err != nil {
-		ns.Log.Error().Msg(err.Error())
-		return err
-	}
-	err = retry.Do(
-		func() error {
-			err := ns.get_token_account_for_specific_mint(personal_wallet_address, solana.WrappedSol.ToPointer(), true)
-			if err != nil {
-				ns.Log.Error().Msg(err.Error())
-				return err
-			}
-			return nil
-		},
-		configs...,
-	)
-	if err != nil {
-		ns.Log.Error().Msg(err.Error())
-		return err
-	}
+
+	val, _ := json.Marshal(ns.PersonalWallet)
+	val2, _ := json.Marshal(ns.ExternalWallet)
+	ns.Log.Debug().Msg(string(val))
+	ns.Log.Debug().Msg(string(val2))
 
 	return nil
 }
