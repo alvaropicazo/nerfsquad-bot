@@ -321,11 +321,14 @@ func (ns *NSReceiver) get_current_solana_price(key string) error {
 	res, _ := http.DefaultClient.Do(req)
 
 	defer res.Body.Close()
-	body, _ := io.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return err
+	}
 
 	var tokenInfo TokenInfo
 
-	err := json.Unmarshal(body, &tokenInfo)
+	err = json.Unmarshal(body, &tokenInfo)
 	if err != nil {
 		return err
 	}
