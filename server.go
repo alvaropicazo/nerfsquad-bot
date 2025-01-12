@@ -74,11 +74,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	ticker := time.NewTicker(10 * time.Minute)
+	ticker := time.NewTicker(20 * time.Minute)
 
 	// Use a goroutine to run the function periodically to keep updating SOL price
 	go func() {
-		for range ticker.C { // Channel receives a tick every 10 minutes
+		for range ticker.C { // Channel receives a tick every 20 minutes
 			err := ns.get_current_solana_price(coingecko_key)
 			if err != nil {
 				ns.Log.Error().Msg(err.Error())

@@ -238,7 +238,6 @@ func (ns *NSReceiver) get_balance(client *rpc.Client, external_wallet_address so
 
 // Gets the different token accounts from the tracked wallet and amount for a specific mint.
 func (ns *NSReceiver) get_token_account_for_specific_mint(pubKey solana.PublicKey, mint *solana.PublicKey, ourWallet bool) error {
-	time.Sleep(time.Second * 1) //due to requests / sec limitations, we are obligued to wait
 	out_mint, err := ns.Client.GetTokenAccountsByOwner(
 		context.TODO(),
 		pubKey,
@@ -270,15 +269,14 @@ func (ns *NSReceiver) get_token_account_for_specific_mint(pubKey solana.PublicKe
 	if ourWallet {
 		ns.PersonalWallet.MintQuantityHashMap[*mint] = float64(float64(*out_tokenbalance.Value.UiAmount))
 		ns.PersonalWallet.TokenAccountHashMap[*mint] = out_mint.Value[0].Pubkey
+		val, _ := json.Marshal(ns.PersonalWallet)
+		ns.Log.Debug().Msg(string(val))
 	} else {
 		ns.ExternalWallet.MintQuantityHashMap[*mint] = float64(float64(*out_tokenbalance.Value.UiAmount))
 		ns.ExternalWallet.TokenAccountHashMap[*mint] = out_mint.Value[0].Pubkey
+		val2, _ := json.Marshal(ns.ExternalWallet)
+		ns.Log.Debug().Msg(string(val2))
 	}
-
-	val, _ := json.Marshal(ns.PersonalWallet)
-	val2, _ := json.Marshal(ns.ExternalWallet)
-	ns.Log.Debug().Msg(string(val))
-	ns.Log.Debug().Msg(string(val2))
 
 	return nil
 }
