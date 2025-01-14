@@ -186,13 +186,34 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
 
     //Our own slippage check
     let sol_from_sell
+    let body_req
     if (tx_type == "BUY") {
       sol_from_sell = parseInt(swapResponse.data.outputAmount) / 1000000
+      body_req = {
+        computeUnitPriceMicroLamports: String(data.data.default.h),
+        swapResponse,
+        wrapSol:true,
+        unwrapSol:true,
+        txVersion,
+        wallet: wallet.publicKey.toBase58(),
+        //inputAccount: tokenAccountPersonal.toBase58(),
+        // outputAccount: isOutputSol ? undefined : outputTokenAcc?.toBase58(),
+      }
       // if (parseInt(swapResponse.data.outputAmount) / 1000000 < max_permitted){
       //   throw new Error('Slippage Exceeded')
       // }
     } else {
       sol_from_sell = parseInt(swapResponse.data.outputAmount) / 1000000000
+      body_req = {
+        computeUnitPriceMicroLamports: String(data.data.default.h),
+        swapResponse,
+        wrapSol:true,
+        unwrapSol:true,
+        txVersion,
+        wallet: wallet.publicKey.toBase58(),
+        inputAccount: tokenAccountPersonal.toBase58(),
+        // outputAccount: isOutputSol ? undefined : outputTokenAcc?.toBase58(),
+      }
       // if (parseInt(swapResponse.data.outputAmount) / 1000000 < max_permitted){
       //   throw new Error('Slippage Exceeded')
       // }
@@ -204,21 +225,13 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
       success: boolean
       msg: string
       data: { transaction: string }[]
-    }>(`${raydium.API_URLS.SWAP_HOST}/transaction/${url}`, {
-      computeUnitPriceMicroLamports: String(data.data.default.h),
-      swapResponse,
-      wrapSol:true,
-      unwrapSol:true,
-      txVersion,
-      wallet: wallet.publicKey.toBase58(),
-      inputAccount: tokenAccountPersonal.toBase58(),
-      // outputAccount: isOutputSol ? undefined : outputTokenAcc?.toBase58(),
-    })
+    }>(`${raydium.API_URLS.SWAP_HOST}/transaction/${url}`, body_req)
 
 
     if (swapTransactions.success == false) {
       throw new Error(swapTransactions.msg)
     }
+
 
     const allTxBuf = swapTransactions.data.map((tx) => Buffer.from(tx.transaction, 'base64'))
     const allTransactions = allTxBuf.map((txBuf) =>
