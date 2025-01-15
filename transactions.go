@@ -8,7 +8,8 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	
+
+	"github.com/enescakir/emoji"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 )
@@ -16,9 +17,9 @@ import (
 var zero uint64
 
 // main function which calls submethods to recreate tx
-func (ns *NSReceiver) replicate_transaction(tx_available []TransactionFormatted, pubKeyExternalWallet solana.PublicKey, personalKeyWallet solana.PublicKey, send_transactions_api_url string, slippage float64) error {
+func (ns *NSReceiver) replicate_transaction(tx_available []TransactionFormatted, pubKeyExternalWallet solana.PublicKey, personalKeyWallet solana.PublicKey, send_transactions_api_url string) error {
 
-	res, err := ns.format_data(tx_available, pubKeyExternalWallet, personalKeyWallet, slippage)
+	res, err := ns.format_data(tx_available, pubKeyExternalWallet, personalKeyWallet)
 	if err != nil {
 		return err
 	}
@@ -26,6 +27,7 @@ func (ns *NSReceiver) replicate_transaction(tx_available []TransactionFormatted,
 	client := &http.Client{}
 
 	for _, tx_to_send := range res {
+		var txResponse TxResponse
 		//Call external component to interact with raydium
 		bytes_slice, err := json.Marshal(tx_to_send)
 		if err != nil {
@@ -48,8 +50,20 @@ func (ns *NSReceiver) replicate_transaction(tx_available []TransactionFormatted,
 		if err != nil {
 			return err
 		}
+		err = json.Unmarshal(responseBody, &txResponse)
+		if err != nil {
+			ns.Log.Error().Msg(err.Error())
+		}
+
+		icon := ""
+		if tx_to_send.Type == "BUY" {
+			icon = string(emoji.GreenCircle) + " "
+		} else {
+			icon = string(emoji.RedCircle) + " "
+		}
+
 		//Send transaction result data to Telegram group chat
-		ns.send_telegram_updates(string(responseBody))
+		ns.send_telegram_updates(icon + txResponse.Message)
 	}
 
 	//Update balance from external wallet and our wallet

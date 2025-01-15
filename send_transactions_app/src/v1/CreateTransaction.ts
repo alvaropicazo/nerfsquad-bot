@@ -45,6 +45,15 @@ interface SwapCompute {
   }
 }
 
+type TxRes = {
+  txId: string
+  solFromSell: number
+} | undefined
+
+type KeyObj = {
+  personal_wallet: string
+} | undefined
+
 function createTimeoutSignal(timeoutMs: number): AbortSignal {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), timeoutMs);
@@ -70,13 +79,14 @@ export const createTransaction = async (req: Request, res: Response) => {
     return
   }
   //get address info from yaml files
-  let wallet
+  let wallet,pubKey
   try {
-    // const dex_doc = yaml.load(fs.readFileSync('../config/wallets.yaml', 'utf8'))
-    // const doc = yaml.load(fs.readFileSync('../config/cryptokeys.yaml', 'utf8'))
+    const doc = yaml.load(fs.readFileSync('../config/cryptokeys.yaml', 'utf8'))
     wallet = Keypair.fromSecretKey(bs58.decode(process.env.PRIV_KEY || ''))
-    // dex_wallet = dex_doc.dex[0]
-    // pubKey = doc.personal_wallet
+    let keyObj = doc as KeyObj
+    if (keyObj != undefined) {
+      pubKey = keyObj.personal_wallet
+    }
   } catch (e) {
     console.log(e);
   }
@@ -85,7 +95,8 @@ export const createTransaction = async (req: Request, res: Response) => {
   console.log("Body received:")
   console.log(tx_info)
 
-  let mint_amount, tokenMintExternal, tokenMintPersonal, txId, tokenAccountPersonal, slippage, message, sol_amount
+  let mint_amount, tokenMintExternal, tokenMintPersonal, tokenAccountPersonal, slippage, message, sol_amount, current_price, amount_in_usd
+  let obj:TxRes
   if (tx_info.type == "BUY") {
     tokenMintPersonal = new PublicKey('So11111111111111111111111111111111111111112')
     tokenMintExternal = new PublicKey(tx_info.mintName)
@@ -93,19 +104,20 @@ export const createTransaction = async (req: Request, res: Response) => {
     mint_amount = tx_info.mintAmount
     slippage = tx_info.slippage
     sol_amount = ( tx_info.solAmount - 0.00001 ) * 1000000000 // we are leaving a bit of WSOL just to keep our account
-    message = `${tx_info.type} operation of ${tx_info.mintName}. Amount spent:  ${tx_info.solAmount}. `
+    current_price = tx_info.currentPrice
+    amount_in_usd = Math.round(tx_info.solAmount * current_price * 100) / 100
+    message = `Wallet ${pubKey}: ${tx_info.type} operation of ${tx_info.mintName}. Sol spent:${tx_info.solAmount} (${amount_in_usd}$).`
     try {
-      txId = await executeSwap(tx_info.type,connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, sol_amount, mint_amount, wallet as Signer, tokenAccountPersonal, slippage)
-      if (txId instanceof Error) {
+      obj = await executeSwap(tx_info.type,connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, sol_amount, mint_amount, wallet as Signer, tokenAccountPersonal, slippage)
+      if (obj instanceof Error) {
         res.status(500).json({
-          message: `An error happened while sending the transaction: ${txId}`,
+          message: `An error happened while sending the transaction: ${obj}`,
         })
         return
       }
     } catch (e) {
       res.status(500).json({
-        message: 'An error happened while sending the transaction',
-        e,
+        message: `An error happened while sending the transaction: ${e}`,
       })
       return
     }
@@ -116,26 +128,31 @@ export const createTransaction = async (req: Request, res: Response) => {
     mint_amount = tx_info.mintAmount * 1000000
     sol_amount = tx_info.solAmount
     tokenAccountPersonal = new PublicKey(tx_info.tokenAccountPersonal)
-    message = `${tx_info.type} operation of ${tx_info.mintName}. Amount spent:  ${tx_info.mintAmount}. Sol received: Around ${sol_amount} `
+    current_price = tx_info.currentPrice
+    message = `Wallet ${pubKey}: ${tx_info.type} operation of ${tx_info.mintName}. Amount sold:${tx_info.mintAmount}.`
     try {
-      txId = await executeSwap(tx_info.type, connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, mint_amount, sol_amount, wallet as Signer, tokenAccountPersonal, slippage)
-      if (txId instanceof Error) {
+      obj = await executeSwap(tx_info.type, connection, 'swap-base-in', tokenMintPersonal as PublicKey, tokenMintExternal as PublicKey, mint_amount, sol_amount, wallet as Signer, tokenAccountPersonal, slippage)
+      if (obj instanceof Error) {
         res.status(500).json({
-          message: `An error happened while sending the transaction: ${txId}`,
+          message: `An error happened while sending the transaction: ${obj}`,
         })
         return
       }
+      if (obj != undefined) {
+        let sol_from_sell_round = Math.round(obj.solFromSell * 100) / 100
+        let sol_obtained = Math.round(obj.solFromSell * current_price * 100) / 100
+        message = message + ` Sol received:${sol_from_sell_round} (${sol_obtained}$).`
+      }
     } catch (e) {
       res.status(500).json({
-        message: 'An error happened while sending the transaction',
-        e,
+        message: `An error happened while sending the transaction: ${e}`,
       })
       return
     }
 
   }
   res.status(200).json({
-    message: `Transaction submitted: ${message}.` + `${solscan_url}/${txId}`,
+    message: `${message}` + ` ${solscan_url}/${obj?.txId}`,
   })
   return
 }
@@ -168,29 +185,53 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
     }
 
     //Our own slippage check
-    // if (tx_type == "BUY") {
-    //   if (parseInt(swapResponse.data.outputAmount) / 1000000 < max_permitted){
-    //     throw new Error('Slippage Exceeded')
-    //   }
-    // } else {
-    //   if (parseInt(swapResponse.data.outputAmount) / 1000000000 < max_permitted){
-    //     throw new Error('Slippage Exceeded')
-    //   }
-    // }
+    let sol_from_sell
+    let body_req
+    if (tx_type == "BUY") {
+      sol_from_sell = parseInt(swapResponse.data.outputAmount) / 1000000
+      body_req = {
+        computeUnitPriceMicroLamports: String(data.data.default.h),
+        swapResponse,
+        wrapSol:true,
+        unwrapSol:true,
+        txVersion,
+        wallet: wallet.publicKey.toBase58(),
+        //inputAccount: tokenAccountPersonal.toBase58(),
+        // outputAccount: isOutputSol ? undefined : outputTokenAcc?.toBase58(),
+      }
+      // if (parseInt(swapResponse.data.outputAmount) / 1000000 < max_permitted){
+      //   throw new Error('Slippage Exceeded')
+      // }
+    } else {
+      sol_from_sell = parseInt(swapResponse.data.outputAmount) / 1000000000
+      body_req = {
+        computeUnitPriceMicroLamports: String(data.data.default.h),
+        swapResponse,
+        wrapSol:true,
+        unwrapSol:true,
+        txVersion,
+        wallet: wallet.publicKey.toBase58(),
+        inputAccount: tokenAccountPersonal.toBase58(),
+        // outputAccount: isOutputSol ? undefined : outputTokenAcc?.toBase58(),
+      }
+      // if (parseInt(swapResponse.data.outputAmount) / 1000000 < max_permitted){
+      //   throw new Error('Slippage Exceeded')
+      // }
+    }
 
     const { data: swapTransactions } = await axios.post<{
       id: string
       version: string
       success: boolean
+      msg: string
       data: { transaction: string }[]
-    }>(`${raydium.API_URLS.SWAP_HOST}/transaction/${url}`, {
-      computeUnitPriceMicroLamports: String(data.data.default.h),
-      swapResponse,
-      txVersion,
-      wallet: wallet.publicKey.toBase58(),
-      inputAccount: tokenAccountPersonal.toBase58(),
-      // outputAccount: isOutputSol ? undefined : outputTokenAcc?.toBase58(),
-    })
+    }>(`${raydium.API_URLS.SWAP_HOST}/transaction/${url}`, body_req)
+
+
+    if (swapTransactions.success == false) {
+      throw new Error(swapTransactions.msg)
+    }
+
 
     const allTxBuf = swapTransactions.data.map((tx) => Buffer.from(tx.transaction, 'base64'))
     const allTransactions = allTxBuf.map((txBuf) =>
@@ -205,7 +246,7 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
         transaction.sign(wallet)
         const txId = await sendAndConfirmTransaction(connection, transaction, [wallet], { skipPreflight: true, abortSignal: abortSignal })
         console.log(`${++idx} transaction confirmed, txId: ${txId}`)
-        return txId
+        return {txId: txId, solFromSell: sol_from_sell}
       }
     } else {
       for (const tx of allTransactions) {
@@ -217,7 +258,7 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
           commitment: 'finalized',
         })
         console.log(`${idx} transaction sending..., txId: ${txId}`)
-        return txId
+        return {txId: txId, solFromSell: sol_from_sell}
         // const res = await connection.confirmTransaction(
         //   {
         //     blockhash,
@@ -232,6 +273,6 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
     }
   }
   catch (e) {
-    return e
+    throw String(e)
   }
 };
