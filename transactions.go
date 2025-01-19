@@ -86,7 +86,7 @@ func (ns *NSReceiver) check_new_tx_available(wallet_address solana.PublicKey, ap
 	out_new_sigs, err := ns.Client.GetSignaturesForAddress(
 		context.TODO(),
 		wallet_address,
-		&rpc.GetSignaturesForAddressOpts{Until: sig, Commitment: "confirmed"}, //replace with signature param
+		&rpc.GetSignaturesForAddressOpts{Until: sig, Commitment: "processed"}, //replace with signature param
 	)
 	if err != nil {
 		ns.Log.Error().Msg(err.Error())

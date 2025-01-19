@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/avast/retry-go/v4"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"gopkg.in/yaml.v3"
@@ -316,7 +317,10 @@ func (ns *NSReceiver) get_current_solana_price(key string) error {
 	req.Header.Add("accept", "application/json")
 	req.Header.Add("x-cg-demo-api-key", key)
 
-	res, _ := http.DefaultClient.Do(req)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
 
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
@@ -332,6 +336,22 @@ func (ns *NSReceiver) get_current_solana_price(key string) error {
 	}
 
 	ns.SolPrice = tokenInfo.Solana["usd"]
+
+	return nil
+}
+
+// Retrieves Program accounts for specific DEX.
+func (ns *NSReceiver) get_program_accounts(dex_address solana.PublicKey) error {
+	out_sol, err := ns.Client.GetProgramAccounts(
+		context.TODO(),
+		dex_address,
+	)
+	if err != nil {
+		return err
+	}
+
+	program_accounts := out_sol
+	spew.Dump(program_accounts)
 
 	return nil
 }
