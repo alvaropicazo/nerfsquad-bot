@@ -7,18 +7,13 @@ import {
   Keypair,
   sendAndConfirmTransaction
 } from '@solana/web3.js'
-// import { getKeypairFromEnvironment } from '@solana-developers/helpers'
 import yaml from 'js-yaml'
 import { Request, Response } from 'express'
 import fs from 'fs'
 import * as raydium from '@raydium-io/raydium-sdk-v2'
-// import  { Liquidity, LIQUIDITY_POOLS } from "@raydium-io/raydium-sdk";
 import axios from 'axios'
 import { bs58 } from '@project-serum/anchor/dist/cjs/utils/bytes'
-import { exit } from 'process'
-// import { NATIVE_MINT, getAssociatedTokenAddress } from '@solana/spl-token'
 import dotenv from 'dotenv'
-import { Market } from '@project-serum/serum';
 
 dotenv.config()
 interface SwapCompute {
@@ -215,7 +210,7 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
         txVersion,
         wallet: wallet.publicKey.toBase58(),
         //inputAccount: tokenAccountPersonal.toBase58(),
-        // outputAccount: isOutputSol ? undefined : outputTokenAcc?.toBase58(),
+        //outputAccount: isOutputSol ? undefined : outputTokenAcc?.toBase58(),
       }
       // if (parseInt(swapResponse.data.outputAmount) / 1000000 < max_permitted){
       //   throw new Error('Slippage Exceeded')

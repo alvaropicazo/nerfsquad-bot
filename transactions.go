@@ -106,7 +106,6 @@ func (ns *NSReceiver) check_new_tx_available(wallet_address solana.PublicKey, ap
 		signatures = append(signatures, new_sig.Signature)
 	}
 
-	// ns.Log.Info().Msg("SIGNATURES: " + strconv.Itoa(len(signatures)))
 	check_point := sig
 	for i, signature := range signatures {
 		out, err := ns.Client.GetTransaction(

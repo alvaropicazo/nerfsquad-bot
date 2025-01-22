@@ -5,4 +5,3 @@ go.sum
 /config/apis.yaml
 /config/keys.yaml
 /send_transactions_app/node_modules
-/send_transactions_app/src/v1/trash.txt
