@@ -92,14 +92,12 @@ func main() {
 		ns.Log.Error().Msg(err.Error())
 		os.Exit(1)
 	}
-	//signature_starting_point = solana.MustSignatureFromBase58("")
 
 	//Slippage
 	ns.Slippage = 0.4
 	ns.Log.Debug().Msg("Initial starting point: " + signature_starting_point.String())
 	//infinite loop checking for new transactions
 	for {
-		// ns.Log.Info().Msg("Starting to check new transactions available")
 		available, tx_available, new_starting_point, _ := ns.check_new_tx_available(pubKeyExternalWallet, instantnodes_key, signature_starting_point, dex_wallets)
 		signature_starting_point = new_starting_point
 		if available {

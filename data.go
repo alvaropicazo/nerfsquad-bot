@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/avast/retry-go/v4"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"gopkg.in/yaml.v3"
@@ -35,36 +36,6 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 				str, _ := json.Marshal(ns.PersonalWallet.PersonalBalance)
 				ns.send_telegram_updates("Tried to perform a BUY operation. Insufficient balance. Add more SOL. Current balance: " + string(str))
 				continue
-			}
-			//Get Info for external wallet about the mint
-			// err := retry.Do(
-			// 	func() error {
-			// 		err := ns.get_token_account_for_specific_mint(pubKeyExternalWallet, tx.MintName.ToPointer(), false)
-			// 		if err != nil {
-			// 			ns.Log.Error().Msg(err.Error())
-			// 			return err
-			// 		}
-			// 		return nil
-			// 	},
-			// 	configs...,
-			// )
-			// if err != nil {
-			// 	ns.Log.Error().Msg(err.Error())
-			// 	return nil, err
-			// }
-
-			//Get Token Supply
-			token_supply, err := ns.get_token_supply(tx.MintName)
-			if err != nil {
-				ns.Log.Error().Msg(err.Error())
-				return nil, err
-			}
-
-			//Check wether we should wait x seconds due to market cap limitations or not
-			percentage_owned := tx.MintAmount / token_supply
-			if percentage_owned > 0.01 {
-				ns.Log.Info().Msg("Wallet is owning more than 1%")
-				time.Sleep(time.Second * 90)
 			}
 			total := ns.ExternalWallet.PersonalBalance
 			percentage_external := tx.SolAmount / total
@@ -94,14 +65,14 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 			if ns.PersonalWallet.MintQuantityHashMap[tx.MintName] == 0.0 {
 				continue //we skip as we dont have anything to sell
 			}
-			percentage_to_sell := tx.MintAmount / tx.MintPre //If its 1, all stake was sold for that token.
-			mint_to_sell := float64(ns.PersonalWallet.MintQuantityHashMap[tx.MintName]) * percentage_to_sell
+			//percentage_to_sell := tx.MintAmount / tx.MintPre //If its 1, all stake was sold for that token.
+			mint_to_sell := float64(ns.PersonalWallet.MintQuantityHashMap[tx.MintName]) //* percentage_to_sell
 			sol_to_receive := mint_to_sell * tx.SolAmount / tx.MintAmount
 			tx_to_send.MintAmount = convert_num(mint_to_sell)
 			tx_to_send.SolAmount = convert_num(sol_to_receive)
 			if tx_to_send.SolAmount < 0.025 {
 				ns.Log.Info().Msg("Due to low rates, half of the stake will be sold")
-				mint_to_sell = float64(ns.PersonalWallet.MintQuantityHashMap[tx.MintName]) * 0.6 //we sell 0.6 of it due to low numbers as we need to make sure tx are submitted correctly
+				mint_to_sell = float64(ns.PersonalWallet.MintQuantityHashMap[tx.MintName]) //* 0.6 //we sell 0.6 of it due to low numbers as we need to make sure tx are submitted correctly
 				sol_to_receive = mint_to_sell * tx.SolAmount / tx.MintAmount
 				tx_to_send.MintAmount = convert_num(mint_to_sell)
 				tx_to_send.SolAmount = convert_num(sol_to_receive)
@@ -316,7 +287,10 @@ func (ns *NSReceiver) get_current_solana_price(key string) error {
 	req.Header.Add("accept", "application/json")
 	req.Header.Add("x-cg-demo-api-key", key)
 
-	res, _ := http.DefaultClient.Do(req)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
 
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
@@ -330,8 +304,26 @@ func (ns *NSReceiver) get_current_solana_price(key string) error {
 	if err != nil {
 		return err
 	}
-
+	if tokenInfo.Solana["usd"] == float64(0) {
+		return nil
+	}
 	ns.SolPrice = tokenInfo.Solana["usd"]
+
+	return nil
+}
+
+// Retrieves Program accounts for specific DEX.
+func (ns *NSReceiver) get_program_accounts(dex_address solana.PublicKey) error {
+	out_sol, err := ns.Client.GetProgramAccounts(
+		context.TODO(),
+		dex_address,
+	)
+	if err != nil {
+		return err
+	}
+
+	program_accounts := out_sol
+	spew.Dump(program_accounts)
 
 	return nil
 }

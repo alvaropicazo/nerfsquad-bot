@@ -30,6 +30,7 @@ func (ns *NSReceiver) send_telegram_updates(body_received string) {
 	)
 	if err != nil {
 		ns.Log.Error().Msg(err.Error())
+		return
 	}
 	defer response.Body.Close()
 }

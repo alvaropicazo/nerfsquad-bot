@@ -7,17 +7,14 @@ import {
   Keypair,
   sendAndConfirmTransaction
 } from '@solana/web3.js'
-// import { getKeypairFromEnvironment } from '@solana-developers/helpers'
 import yaml from 'js-yaml'
 import { Request, Response } from 'express'
 import fs from 'fs'
 import * as raydium from '@raydium-io/raydium-sdk-v2'
-// import  { Liquidity, LIQUIDITY_POOLS } from "@raydium-io/raydium-sdk";
 import axios from 'axios'
 import { bs58 } from '@project-serum/anchor/dist/cjs/utils/bytes'
-import { exit } from 'process'
-// import { NATIVE_MINT, getAssociatedTokenAddress } from '@solana/spl-token'
 import dotenv from 'dotenv'
+
 dotenv.config()
 interface SwapCompute {
   id: string
@@ -54,6 +51,15 @@ type KeyObj = {
   personal_wallet: string
 } | undefined
 
+type TokenObj = {
+  keys: Keys
+} | undefined
+
+type Keys = {
+  instantnodes: string
+  coingecko: string
+} | undefined
+
 function createTimeoutSignal(timeoutMs: number): AbortSignal {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), timeoutMs);
@@ -65,8 +71,28 @@ const abortSignal = createTimeoutSignal(timeoutMs);
 const solscan_url = 'https://solscan.io/tx'
 
 export const createTransaction = async (req: Request, res: Response) => {
+    //get address info from yaml files and tokens
+    let wallet,pubKey,tokenInstantNodes
+    try {
+      const walletDoc = yaml.load(fs.readFileSync('../config/cryptokeys.yaml', 'utf8'))
+      wallet = Keypair.fromSecretKey(bs58.decode(process.env.PRIV_KEY || ''))
+      let walletObj = walletDoc as KeyObj
+      if (walletObj != undefined) {
+        pubKey = walletObj.personal_wallet
+      }
+      const tokenDoc = yaml.load(fs.readFileSync('../config/keys.yaml', 'utf8'))
+      let tokenObj = tokenDoc as TokenObj
+      if (tokenObj != undefined) {
+        tokenInstantNodes = tokenObj.keys?.instantnodes
+      }
+    } catch (e) {
+      console.log(e);
+    }
+
+
+
   //create connection to the sol net
-  const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+  const connection = new Connection('https://solana-api.instantnodes.io/token-' + {tokenInstantNodes});
   const raydiumApi = new raydium.Api({
     cluster: "mainnet",
     timeout: 5000, // (in milliseconds)
@@ -77,18 +103,6 @@ export const createTransaction = async (req: Request, res: Response) => {
       message: 'Wrong body'
     })
     return
-  }
-  //get address info from yaml files
-  let wallet,pubKey
-  try {
-    const doc = yaml.load(fs.readFileSync('../config/cryptokeys.yaml', 'utf8'))
-    wallet = Keypair.fromSecretKey(bs58.decode(process.env.PRIV_KEY || ''))
-    let keyObj = doc as KeyObj
-    if (keyObj != undefined) {
-      pubKey = keyObj.personal_wallet
-    }
-  } catch (e) {
-    console.log(e);
   }
 
   let tx_info = req.body
@@ -161,7 +175,6 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
   const txVersion = 'V0' // or LEGACY
   const isV0Tx = txVersion === 'V0'
   try {
-
     const { data } = await axios.get<{
       id: string
       success: boolean
@@ -197,7 +210,7 @@ const executeSwap = async (tx_type: string, connection: Connection, url: string,
         txVersion,
         wallet: wallet.publicKey.toBase58(),
         //inputAccount: tokenAccountPersonal.toBase58(),
-        // outputAccount: isOutputSol ? undefined : outputTokenAcc?.toBase58(),
+        //outputAccount: isOutputSol ? undefined : outputTokenAcc?.toBase58(),
       }
       // if (parseInt(swapResponse.data.outputAmount) / 1000000 < max_permitted){
       //   throw new Error('Slippage Exceeded')
