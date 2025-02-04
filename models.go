@@ -19,6 +19,7 @@ type TransactionFormatted struct {
 	MintName   solana.PublicKey
 	MintPre    float64
 	ProgramId  solana.PublicKey
+	PoolId     solana.PublicKey
 }
 
 type TransactionToSend struct {

@@ -92,6 +92,59 @@ func (ns *NSReceiver) format_data(tx_available []TransactionFormatted, pubKeyExt
 	return res, nil
 }
 
+// Calculates the quantity of x token that should be transferred according to our balance. PUMP FUN interaction
+func (ns *NSReceiver) format_data_pump_fun(tx_available []TransactionFormatted, pubKeyExternalWallet solana.PublicKey, personalKeyWallet solana.PublicKey) ([]TransactionToSend, error) {
+	configs := []retry.Option{
+		retry.Attempts(uint(1)),
+		retry.OnRetry(func(n uint, err error) {
+			log.Printf("Retry request %d to and get error: %v", n+1, err)
+		}),
+		retry.Delay(time.Second),
+	}
+	res := []TransactionToSend{}
+	for _, tx := range tx_available {
+		tx_to_send := TransactionToSend{}
+		if tx.Type == "BUY" {
+			if ns.PersonalWallet.PersonalBalance < 0.035 { //0.035 is the min amount to spend to be able to execute tx successfully
+				str, _ := json.Marshal(ns.PersonalWallet.PersonalBalance)
+				ns.send_telegram_updates("Tried to perform a BUY operation. Insufficient balance. Add more SOL. Current balance: " + string(str))
+				continue
+			}
+			tx_to_send.MintAmount = tx.MintAmount
+			tx_to_send.SolAmount = 0.035
+		} else if tx.Type == "SELL" {
+			err := retry.Do(
+				func() error {
+					err := ns.get_token_account_for_specific_mint(personalKeyWallet, tx.MintName.ToPointer(), true)
+					if err != nil {
+						ns.Log.Error().Msg(err.Error())
+						return err
+					}
+					return nil
+				},
+				configs...,
+			)
+			if err != nil {
+				ns.Log.Error().Msg(err.Error())
+				return nil, err
+			}
+			if ns.PersonalWallet.MintQuantityHashMap[tx.MintName] == 0.0 {
+				continue //we skip as we dont have anything to sell
+			}
+			tx_to_send.MintAmount = float64(ns.PersonalWallet.MintQuantityHashMap[tx.MintName]) //we are selling 100% of our stake regardless the amount sold by the wallet tracked
+		}
+		tx_to_send.Slippage = ns.Slippage
+		tx_to_send.Type = tx.Type
+		tx_to_send.ProgramId = tx.ProgramId
+		tx_to_send.MintName = tx.MintName
+		tx_to_send.CurrentPrice = ns.SolPrice
+		res = append(res, tx_to_send)
+	}
+	marsh, _ := json.Marshal(res)
+	ns.Log.Info().Msg("Transactions that will be sent: " + string(marsh))
+	return res, nil
+}
+
 // Retrieves the keys to be used for the apis.
 func get_api_key() (map[string]interface{}, error) {
 	keys_file := make(map[string]interface{})
@@ -159,7 +212,7 @@ func get_personal_wallet_obj() (map[interface{}]interface{}, error) {
 }
 
 // Gets the signature as a starting point, any transaction newer to it should be checked.
-func (ns *NSReceiver) get_starting_point(wallet_address solana.PublicKey, api_token string, current_date int64) (solana.Signature, error) {
+func (ns *NSReceiver) get_starting_point(wallet_address solana.PublicKey) (solana.Signature, error) {
 	out, err := ns.Client.GetSignaturesForAddress(
 		context.TODO(),
 		wallet_address,

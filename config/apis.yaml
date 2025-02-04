@@ -1,9 +1,10 @@
 url:
-  helius: https://api.helius.xyz/v0/addresses/{}/transactions
+  helius: https://mainnet.helius-rpc.com/?api-key=
   raydium: https://api-v3.raydium.io/
   solscan: https://api-v2.solscan.io/v2/account/transactions?account=
   instantnodes: https://solana-api.instantnodes.io/token-
   telegram: https://api.telegram.org/bot7715966976:AAG_zG6adipybsWRSks90YTqIkVdaFO_sW4/sendMessage
-  send_transactions_app: http://localhost:3000/transaction
+  send_transactions_app: http://localhost:3000/
+
 
 chat_id: -4799475432
